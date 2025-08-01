@@ -60,22 +60,30 @@ config:
   layout: dagre
 ---
 flowchart TD
+  subgraph USER_VIEW["User Interface"]
+    User["User"]
+    UI["<b>AI User Interface</b><br>User communicates with AI"]
+  end
+
   subgraph MCP_HOST["MCP Host Application"]
-        AI["AI Model\nHandles conversation & prompt flow"]
-        CLIENT["MCP Client\nManages server connections & tool availability"]
+    AI["<b>AI Model</b><br>Handles conversation & prompt flow"]
+    CLIENT["<b>MCP Client</b><br>Manages server connections & tool availability"]
   end
+
   subgraph MCP_SERVER["MCP Server"]
-        TOOLS["Provena Tools"]
-        GET["get_record<br>Query/search database"]
-        SEARCH["search_data<br>Find records by criteria"]
-        CREATE["create_record<br>Create provenance records"]
-        MODIFY["modify_record<br>Update existing records"]
+    TOOLS["Provena Tools"]
+    GET["<b>get_recor</b>d<br>Query/search database"]
+    SEARCH["<b>search_data</b><br>Find records by criteria"]
+    CREATE["<b>create_record</b><br>Create provenance records"]
+    MODIFY["<b>modify_record</b><br>Update existing records"]
   end
+
   subgraph PROVENA["Provena System"]
-        API["Provena API"]
-        DB[("Database")]
+    API["Provena API"]
+    DB[("Database")]
   end
-  User["User"] <--> UI["AI User Interface\nUser communicates with AI"]
+
+  User <--> UI
   UI <--> AI
   AI <--> CLIENT
   CLIENT <--> TOOLS
