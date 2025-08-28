@@ -32,9 +32,11 @@ This POC validates the technical feasibility of using AI to reduce metadata mana
    python3 -m venv venv
    source venv/bin/activate
    ```
-3. **Install dependencies:**
+3. **Install dependencies** (there are some version mismatching that need to be manually upgraded):
    ```sh
    pip install .
+   pip install --upgrade cloudpathlib
+   pip install --upgrade fastmcp
    ```
 4. **Set environment variables**:
    - Set the .env.example to .env and put in your openai api key
