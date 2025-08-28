@@ -1,0 +1,24 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+
+# Virtual environment
+venv/
+.venv/
+
+# Provena/legacy token files (should not be used, but just in case)
+provena.key
+provena_tokens.enc
+.tokens.json
+tokens.json
+
+# dotenv
+.env
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+build/
+*.egg-info/

@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=45", "wheel", "setuptools-scm[toml]>=6.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "provena-mcp-server"
+version = "0.1.0"
+description = "MCP Server for Provena API integration with Pydantic v2"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastmcp>=2.0.0",
+    "provenaclient==0.29.1",
+    "asyncio",
+    "typing-extensions>=4.5.0",
+    "keyring>=24.0.0",
+    "openai>=1.102.0"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=22.0",
+    "isort>=5.10",
+    "mypy>=1.0"
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["*"]
+
+[tool.black]
+line-length = 88
+target-version = ['py310']
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+
+[tool.mypy]
+python_version = "^3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
