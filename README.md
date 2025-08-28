@@ -18,25 +18,65 @@ This project’s current proof of concept uses **Claude Desktop** as both the LL
 
 This POC validates the technical feasibility of using AI to reduce metadata management complexity in research systems like Provena.
 
+## Features
+- Secure authentication with Provena using device flow
+- Tokens stored in your OS keyring (never in plain text files)
+- No sensitive files committed to the repo
+- Simple local dev setup
+
+## Setup
+
+1. **Clone the repo**
+2. **Create a virtual environment:**
+   ```sh
+   python3 -m venv venv
+   source venv/bin/activate
+   ```
+3. **Install dependencies** (there are some version mismatching that need to be manually upgraded):
+   ```sh
+   pip install .
+   pip install --upgrade cloudpathlib
+   pip install --upgrade fastmcp
+   ```
+4. **Set environment variables**:
+   - Set the .env.example to .env and put in your openai api key
+
+## Usage
+
+- Start the server:
+  ```sh
+  python provena_mcp_server.py --http
+  ```
+- Use the provided mcp client to interact with the server (must provide OpenAI API key in .env to use.
+  ```sh
+  python mcp_client.py
+  ```
+-  Test using the tools in the MCP Server via talking to the MCP Client
+-  For example, use the login tool to which will open the browser and prompt user login to provide the server with the access token
+
+## Security
+- Tokens are stored in your OS keyring (see the `keyring` Python package docs for details).
+- No `.tokens.json`, `.enc`, or `.key` files are committed or needed.
+- On logout, any temp files created by the Provena client are deleted automatically.
+
+## .gitignore
+Sensitive and temp files are ignored by default (see `.gitignore`).
+
 ## POC Development Checklist
 
-- [ ] **Set up remote MCP server foundations**  
+- [x] **Set up remote MCP server foundations**  
   Create basic structure for the server, tooling interfaces, and plugin registration.
 
 - [ ] **Define basic tool definitions**  
   Implement 'mock' `get_record`, `search_data`, `create_record`, `modify_record` tools.
 
-- [ ] **Verify Claude Desktop connects to remote MCP server**  
-  Ensure Claude can list and interact with exposed tools remotely.
+- [x] **Create Terminal based MCP Client chatbot**  
 
-- [ ] **Implement authentication using third-party authorization flow**  
+- [x] **Implement authentication using third-party authorization flow**  
       Handle token acquisition and attach credentials to tool requests securely.
-    - [ ] Confirm Provena supports OAuth 2.0 (Authorization Code Flow)
-    - [ ] Register the MCP Server as an OAuth Client in Provena
-    - [ ] Implement OAuth Authorization Code Flow in MCP Server
-    - [ ] Generate MCP Access Tokens linked to Provena sessions
-    - [ ] Handle token expiry and revocation
-    - [ ] Secure OAuth credentials and token handling
+    - [x] Confirm Provena supports OAuth 2.0 (Authorization Code Flow)
+    - [x] Register the MCP Server as an OAuth Client in Provena
+    - [x] Implement OAuth Authorization Code Flow in MCP Server
 
 - [ ] **Connect MCP server tools to real Provena API endpoints**  
       Begin with read operations, then expand to write/update.
@@ -94,32 +134,4 @@ flowchart TD
   MODIFY --> API
   API <--> DB
 
-```
-
-## Possible Authentication/Authorisation Flow
-```mermaid
-sequenceDiagram
-    participant User
-    participant ClaudeDesktop as Claude Desktop (MCP Client)
-    participant MCPServer as MCP Server (OAuth Client & Server)
-    participant ProvenaAuth as Provena Authorization Server
-    participant ProvenaAPI as Provena API
-
-    User->>ClaudeDesktop: Request to search Provena DB
-    ClaudeDesktop->>MCPServer: Request search (no auth)
-    MCPServer->>ClaudeDesktop: Redirect user to Provena login
-    ClaudeDesktop->>User: Show Provena login page
-
-    User->>ProvenaAuth: Login with credentials
-    ProvenaAuth->>MCPServer: Redirect with authorization code
-    MCPServer->>ProvenaAuth: Exchange code for access token
-    ProvenaAuth->>MCPServer: Return access token
-
-    MCPServer->>MCPServer: Generate MCP token linked to Provena token
-    MCPServer->>ClaudeDesktop: Return MCP token
-
-    ClaudeDesktop->>MCPServer: Use MCP token to request DB search
-    MCPServer->>ProvenaAPI: Query DB using Provena access token
-    ProvenaAPI->>MCPServer: Return search results
-    MCPServer->>ClaudeDesktop: Return search results to user
 ```
