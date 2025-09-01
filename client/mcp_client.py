@@ -53,7 +53,15 @@ async def ai_chat_loop():
             })
 
         openai_client = OpenAI(api_key=OPENAI_API_KEY)
-        messages = [{"role": "system", "content": "You are connected to Provena MCP tools. Use them to help the user access and search Provena data. The user can authenticate using login_to_provena."}]
+        messages = [{
+            "role": "system",
+            "content": (
+                "You are connected to Provena MCP tools. Use them to help the user access and search Provena data. "
+                "The user can authenticate using login_to_provena. "
+                "Autonomously chain multiple tool calls to complete tasks end-to-end without asking for another user prompt. "
+                "Only request confirmation for destructive/irreversible actions. When done, return a concise final answer."
+            )
+        }]
 
         print("\nChat started! Commands: 'quit', 'exit'")
         print("Ask me anything about Provena data!\n")
@@ -66,51 +74,55 @@ async def ai_chat_loop():
             messages.append({"role": "user", "content": prompt})
 
             try:
-                ai_resp = openai_client.chat.completions.create(
-                    model=MODEL,
-                    messages=messages,
-                    tools=openai_tools,
-                    tool_choice="auto"
-                )
+                tool_rounds = 0
+                while True:
+                    tool_rounds += 1
+                    if tool_rounds > 12:  
+                        print("AI: Stopping after too many tool rounds.")
+                        break
 
-                msg = ai_resp.choices[0].message
-                messages.append(msg)
-
-                if msg.tool_calls:
-                    for tool_call in msg.tool_calls:
-                        tool_name = tool_call.function.name
-                        args = json.loads(tool_call.function.arguments)
-                        print(f"[Calling: {tool_name}({args})]")
-                        
-                        try:
-                            result = await client.call_tool(tool_name, args)
-                            data = extract_tool_result(result)
-                            result_text = json.dumps(data, indent=2)
-                            print(f"[{tool_name} result]: {result_text}")
-                            
-                            messages.append({
-                                "role": "tool", 
-                                "tool_call_id": tool_call.id, 
-                                "content": result_text
-                            })
-                        except Exception as e:
-                            error_msg = f"Tool error: {str(e)}"
-                            print(f"{error_msg}")
-                            messages.append({
-                                "role": "tool",
-                                "tool_call_id": tool_call.id,
-                                "content": error_msg
-                            })
-                            
-                    final_resp = openai_client.chat.completions.create(
+                    ai_resp = openai_client.chat.completions.create(
                         model=MODEL,
-                        messages=messages
+                        messages=messages,
+                        tools=openai_tools,
+                        tool_choice="auto"
                     )
-                    final_msg = final_resp.choices[0].message
-                    print("AI:", final_msg.content)
-                    messages.append(final_msg)
-                else:
+
+                    msg = ai_resp.choices[0].message
+                    messages.append(msg)
+
+                    if msg.tool_calls:
+                        for tool_call in msg.tool_calls:
+                            tool_name = tool_call.function.name
+                            try:
+                                args = json.loads(tool_call.function.arguments or "{}")
+                            except Exception:
+                                args = {}
+                            print(f"[Calling: {tool_name}({args})]")
+
+                            try:
+                                result = await client.call_tool(tool_name, args)
+                                data = extract_tool_result(result)
+                                result_text = json.dumps(data, indent=2)
+                                print(f"[{tool_name} result]: {result_text}")
+
+                                messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tool_call.id,
+                                    "content": result_text
+                                })
+                            except Exception as e:
+                                error_msg = {"status": "error", "message": str(e)}
+                                print(f"Tool error: {error_msg}")
+                                messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tool_call.id,
+                                    "content": json.dumps(error_msg)
+                                })
+                        continue
+
                     print("AI:", msg.content)
+                    break
                     
             except Exception as e:
                 print(f"Error: {e}")

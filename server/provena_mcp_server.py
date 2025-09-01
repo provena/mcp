@@ -696,7 +696,7 @@ def _get_prov_client(client: ProvenaClient):
 @mcp.tool()
 async def explore_upstream(ctx: Context, starting_id: str, depth: int = 1) -> Dict[str, Any]:
     """
-    Explore upstream lineage from a starting registry ID.
+    Explore upstream lineage from a starting registry ID. 
 
     Args:
         starting_id: The registry item ID to start from.
