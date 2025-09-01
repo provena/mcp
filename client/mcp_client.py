@@ -86,7 +86,7 @@ async def ai_chat_loop():
                             result = await client.call_tool(tool_name, args)
                             data = extract_tool_result(result)
                             result_text = json.dumps(data, indent=2)
-                            print(f"📋 [{tool_name} result]: {result_text}")
+                            print(f"[{tool_name} result]: {result_text}")
                             
                             messages.append({
                                 "role": "tool", 
