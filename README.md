@@ -19,6 +19,7 @@ This project’s current proof of concept uses **Claude Desktop** as both the LL
 This POC validates the technical feasibility of using AI to reduce metadata management complexity in research systems like Provena.
 
 ## Features
+
 - Secure authentication with Provena using device flow
 - Tokens stored in your OS keyring (never in plain text files)
 - No sensitive files committed to the repo
@@ -41,6 +42,10 @@ This POC validates the technical feasibility of using AI to reduce metadata mana
 4. **Set environment variables**:
    - Set the .env.example to .env and put in your openai api key
 
+## Keyrings
+
+This project uses keyrings to store credentials - ensure a keyring backend is configured. See [keyring](https://pypi.org/project/keyring/).
+
 ## Usage
 
 - Start the server:
@@ -51,49 +56,52 @@ This POC validates the technical feasibility of using AI to reduce metadata mana
   ```sh
   python mcp_client.py
   ```
--  Test using the tools in the MCP Server via talking to the MCP Client
--  For example, use the login tool to which will open the browser and prompt user login to provide the server with the access token
+- Test using the tools in the MCP Server via talking to the MCP Client
+- For example, use the login tool to which will open the browser and prompt user login to provide the server with the access token
 
 ## Security
+
 - Tokens are stored in your OS keyring (see the `keyring` Python package docs for details).
 - No `.tokens.json`, `.enc`, or `.key` files are committed or needed.
 - On logout, any temp files created by the Provena client are deleted automatically.
 
 ## .gitignore
+
 Sensitive and temp files are ignored by default (see `.gitignore`).
 
 ## POC Development Checklist
 
 - [x] **Set up remote MCP server foundations**  
-  Create basic structure for the server, tooling interfaces, and plugin registration.
+      Create basic structure for the server, tooling interfaces, and plugin registration.
 
 - [ ] **Define basic tool definitions**  
-  Implement 'mock' `get_record`, `search_data`, `create_record`, `modify_record` tools.
+      Implement 'mock' `get_record`, `search_data`, `create_record`, `modify_record` tools.
 
-- [x] **Create Terminal based MCP Client chatbot**  
+- [x] **Create Terminal based MCP Client chatbot**
 
 - [x] **Implement authentication using third-party authorization flow**  
-      Handle token acquisition and attach credentials to tool requests securely.
-    - [x] Confirm Provena supports OAuth 2.0 (Authorization Code Flow)
-    - [x] Register the MCP Server as an OAuth Client in Provena
-    - [x] Implement OAuth Authorization Code Flow in MCP Server
+       Handle token acquisition and attach credentials to tool requests securely.
+
+  - [x] Confirm Provena supports OAuth 2.0 (Authorization Code Flow)
+  - [x] Register the MCP Server as an OAuth Client in Provena
+  - [x] Implement OAuth Authorization Code Flow in MCP Server
 
 - [ ] **Connect MCP server tools to real Provena API endpoints**  
-      Begin with read operations, then expand to write/update.
-    - [ ] Implement `get_record`
-    - [ ] Implement `search_data`
-    - [ ] Implement `create_record`
-    - [ ] Implement `modify_record`
-          
+       Begin with read operations, then expand to write/update.
+  - [ ] Implement `get_record`
+  - [ ] Implement `search_data`
+  - [ ] Implement `create_record`
+  - [ ] Implement `modify_record`
 - [ ] **Validate full conversational flow**  
-  User → Claude → MCP client → server tools → Provena API → useful response → back to user.
+      User → Claude → MCP client → server tools → Provena API → useful response → back to user.
 
 - [ ] **Evaluate UX: Is it actually simpler and more efficient?**  
-  Compare time and steps to complete a task via:
+      Compare time and steps to complete a task via:
   - Traditional Provena UI
   - Conversational AI + MCP tools
 
 ## Overview of Flow
+
 ```mermaid
 ---
 config:
