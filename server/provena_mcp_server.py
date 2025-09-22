@@ -1,3 +1,4 @@
+from http import client
 import sys
 import os
 import asyncio
@@ -225,6 +226,34 @@ def _dump(obj):
 #     }
 #     await ctx.info("Auth diagnostics generated.")
 #     return details
+
+@mcp.prompt("dataset_registration_workflow")
+def dataset_registration_workflow() -> str:
+    """
+    Guided dataset registration workflow that ensures complete data collection.
+    
+    This prompt creates a systematic process that prevents premature registration
+    and ensures all required information is collected and validated.
+    """
+    return """
+You are a Provena dataset registration specialist. Follow this EXACT workflow:
+
+=== PHASE 1: INITIALIZATION ===
+1. Greet user and explain you'll help register a dataset
+2. Explain the process: collect required info → optional info → summary → confirmation → registration
+
+=== PHASE 2: COLLECT INFORMATION ===
+Look at the register_dataset tool documentation to see all fields.
+Ask for each field conversationally - ENSURE YOU ASK TO COLLECT INFORMATION FOR EVERY SINGLE FIELD. This includes all of the Important, access, approval, metadata, spatial data, temporal data, list, user metadata and peope data fields.
+
+=== PHASE 3: VALIDATION & CONFIRMATION ===
+Show complete summary and get explicit confirmation
+
+=== PHASE 4: REGISTRATION ===
+Call register_dataset with ALL collected information
+
+CRITICAL: Never call register_dataset until ALL required info collected and confirmed.
+"""
 
 @mcp.tool()
 async def login_to_provena(ctx: Context) -> Dict[str, Any]:
@@ -663,143 +692,283 @@ async def explore_downstream(ctx: Context, starting_id: str, depth: int = 1) -> 
     except Exception as e:
         await ctx.error(f"Failed to explore downstream: {str(e)}")
         return {"status": "error", "message": str(e)}
-
-@mcp.tool()
-async def get_dataset_registration_schema(ctx: Context) -> Dict[str, Any]:
-    """
-    Get the complete schema and requirements for dataset registration.
     
-    This tool dynamically extracts the schema from Provena's actual data models
-    to provide current field requirements and validation rules for dataset registration.
+@mcp.tool()
+async def get_current_date(ctx: Context) -> str:
+    """
+    Get the current date in ISO format (YYYY-MM-DD).
     
     Returns:
-        Dictionary containing complete registration schema extracted from Provena models
+        Current date as ISO string
     """
-    await ctx.info("Extracting dataset registration schema from Provena models...")
+    from datetime import datetime
     
-    from ProvenaInterfaces.RegistryModels import (
-        CollectionFormatDatasetInfo, 
-        CollectionFormatAssociations, 
-        CollectionFormatApprovals
-    )
-    from typing import get_origin
-        
-    
-    def extract_all_fields(model_class) -> Dict[str, Any]:
-        """Extract all field information from a Pydantic model dynamically"""
-        fields_info = {}
-            # Get the model schema/fields
-        if hasattr(model_class, 'model_fields'):
-            fields = model_class.model_fields
-            for field_name, field in fields.items():
-                field_info = {
-                    "type": "string",  
-                    "description": "",
-                    "required": field.is_required(),
-                    "default": None 
-                }
-                
-                # Handle default value safely
-                if hasattr(field, 'default'):
-                    default_val = field.default
-                    if hasattr(default_val, '__class__') and 'PydanticUndefined' in str(default_val.__class__):
-                        field_info["default"] = None
-                    elif default_val is not None:
-                        # Try to serialize the default value
-                        try:
-                            import json
-                            json.dumps(default_val)  # Test if it's JSON serializable 
-                            field_info["default"] = default_val
-                        except (TypeError, ValueError):
-                            field_info["default"] = str(default_val)
-                    else:
-                        field_info["default"] = None
-                
-                field_info["description"] = field.description or ""
-                
-                # Extract type information
-                if hasattr(field, 'annotation'):
-                    annotation = field.annotation
-                    if annotation == str:
-                        field_info["type"] = "string"
-                    elif annotation == int:
-                        field_info["type"] = "integer"
-                    elif annotation == float:
-                        field_info["type"] = "number"
-                    elif annotation == bool:
-                        field_info["type"] = "boolean"
-                    elif hasattr(annotation, '__origin__'):
-                        origin = get_origin(annotation)
-                        if origin is list:
-                            field_info["type"] = "array"
-                        elif origin is dict:
-                            field_info["type"] = "object"
-                    else:
-                        field_info["type"] = str(annotation).replace('<class \'', '').replace('\'>', '')
-                
-                fields_info[field_name] = field_info
-        return fields_info
+    current_date = datetime.now().strftime("%Y-%m-%d")
+    await ctx.info(f"Current date: {current_date}")
+    return current_date
 
-    dataset_info_fields = extract_all_fields(CollectionFormatDatasetInfo)
-    association_fields = extract_all_fields(CollectionFormatAssociations)
-    approval_fields = extract_all_fields(CollectionFormatApprovals)
+@mcp.tool()
+async def register_dataset(
+    ctx: Context,
+    name: str,
+    description: str,
+    publisher_id: str,
+    organisation_id: str,
+    created_date: str,
+    published_date: str,
+    license: str,
+    # Access info components
+    access_reposited: bool = True,
+    access_uri: Optional[str] = None,
+    access_description: Optional[str] = None,
+    # Ethics/approval boolean fields
+    ethics_registration_relevant: bool = False,
+    ethics_registration_obtained: bool = False,
+    ethics_access_relevant: bool = False,
+    ethics_access_obtained: bool = False,
+    indigenous_knowledge_relevant: bool = False,
+    indigenous_knowledge_obtained: bool = False,
+    export_controls_relevant: bool = False,
+    export_controls_obtained: bool = False,
+    # Optional metadata fields
+    purpose: Optional[str] = None,
+    rights_holder: Optional[str] = None,
+    usage_limitations: Optional[str] = None,
+    preferred_citation: Optional[str] = None,
+    # Spatial info fields (separate parameters)
+    spatial_coverage: Optional[str] = None,
+    spatial_extent: Optional[str] = None,
+    spatial_resolution: Optional[str] = None,
+    # Temporal info fields
+    temporal_begin_date: Optional[str] = None,
+    temporal_end_date: Optional[str] = None,
+    temporal_resolution: Optional[str] = None,
+    # Arrays for formats and keywords
+    formats: Optional[str] = None, 
+    keywords: Optional[str] = None, 
+    user_metadata: Optional[str] = None, 
+    data_custodian_id: Optional[str] = None,
+    point_of_contact: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Register a new dataset in the Provena registry.
+
+    IMPORTANT WORKFLOW - Follow this exact process:
+    1. Ask user for EACH AND EVERY field conversationally, one by one in the order listed below (mention if it is optional)
+    2. Show complete summary of ALL collected information
+    3. Get explicit user confirmation before calling this tool
+    4. Only call this tool with ALL required information present
+
+    ARGUMENTS AND COLLECTION ORDER (mirrors function signature)
+
+    IMPORTANT FIELDS
+    - name: Dataset name
+    - description: Detailed description
+    - publisher_id: publisher ID (use search_registry)
+    - organisation_id: ORGANISATION ID (record creator)
+    - created_date: YYYY-MM-DD
+    - published_date: YYYY-MM-DD
+    - license: License URI (e.g., https://creativecommons.org/licenses/by/4.0/)
+
+    ACCESS INFORMATION FIELDS (ensure you ask about these)
+    - access_reposited: Stored in Data Store? (default True)
+    - access_uri: URI if externally hosted (optional; recommended if not reposited)
+    - access_description: How to access externally hosted data (optional)
+
+    APPROVALS FIELDS (booleans for true or false)
+    - ethics_registration_relevant, ethics_registration_obtained (if not relevant, obtained is false, and you do not need to ask)
+    - ethics_access_relevant, ethics_access_obtained (if not relevant, obtained is false, and you do not need to ask)
+    - indigenous_knowledge_relevant, indigenous_knowledge_obtained (if not relevant, obtained is false, and you do not need to ask)
+    - export_controls_relevant, export_controls_obtained (if not relevant, obtained is false, and you do not need to ask)
+ 
+    METADATA FIELDS (ensure you ask about these)
+    - purpose: Why the dataset was created
+    - rights_holder: Who owns/manages rights
+    - usage_limitations:  Access/use restrictions
+    - preferred_citation: How to cite this dataset
+
+    SPATIAL DATA FIELDS (ensure you ask about these)
+    - spatial_info: Ask if they want to provide spatial information, if not, skip all spatial fields
+    - spatial_coverage: EWKT with SRID (e.g., SRID=4326;POINT(145.7 -16.2))
+    - spatial_extent: EWKT bbox polygon (SRID=4326;POLYGON((minx miny, maxx miny, maxx maxy, minx maxy, minx miny)))
+    - spatial_resolution: Decimal degrees string (e.g., "0.01")
+
+    TEMPORAL DATA FIELDS (ensure you ask about these)
+    - temporal_info: Ask if they want to provide temporal information, if not, skip all temporal fields
+    - temporal_begin_date, temporal_end_date: collect both or neither (YYYY-MM-DD)
+    - temporal_resolution: ISO8601 duration (e.g., P1D)
+
+    LIST DATA FIELDS (ensure you ask about these)
+    - formats: Comma-separated (e.g., "CSV, JSON")
+    - keywords: Comma-separated tags
+
+    user_metadata DATA FIELDS (ensure you ask about these)
+    - JSON object string; values will be stringified
+
+    PEOPLE DATA FIELDS (ensure you ask about these)
+    - data_custodian_id: PERSON ID (use search_registry)
+    - point_of_contact: Free-text contact details (e.g., email)
+
+    Returns:
+        Dict with registration status and dataset_id (handle)
+    """
+    client = await require_authentication(ctx)
+    if not client:
+        return {"status": "error", "message": "Authentication required"}
     
-    schema = {
-        "model_info": {
-            "source": "Dynamically extracted from ProvenaInterfaces.RegistryModels",
-            "models_used": [
-                "CollectionFormatDatasetInfo",
-                "CollectionFormatAssociations", 
-                "CollectionFormatApprovals"
-            ]
-        },
-        "dataset_info_fields": dataset_info_fields,
-        "association_fields": association_fields,
-        "approval_fields": approval_fields,
+    try:
+        from ProvenaInterfaces.RegistryModels import (
+            CollectionFormat, CollectionFormatDatasetInfo,
+            CollectionFormatAssociations, CollectionFormatApprovals,
+            AccessInfo, CreatedDate, PublishedDate,
+            CollectionFormatSpatialInfo, CollectionFormatTemporalInfo,
+            TemporalDurationInfo
+        )
         
-        "validation_guidance": {
-            "publisher_id": "Must be valid ORGANISATION ID - use search_registry with subtype_filter='ORGANISATION'",
-            "organisation_id": "Must be valid ORGANISATION ID - use search_registry with subtype_filter='ORGANISATION'",
-            "data_custodian_id": "Must be valid PERSON ID - use search_registry with subtype_filter='PERSON'", 
-            "point_of_contact": "Must be valid PERSON ID - use search_registry with subtype_filter='PERSON'",
-            "created_date": "ISO format YYYY-MM-DD",
-            "published_date": "ISO format YYYY-MM-DD"
-        },
+        await ctx.info(f"Registering dataset '{name}'...")
         
-        "examples": {
-            "display_name": "Climate Temperature Dataset 2025",
-            "description": "Daily temperature readings from weather stations across Australia for climate research",
-            "publisher_id": "10378.1/1963720",
-            "created_date": "2025-09-15",
-            "published_date": "2025-09-15",
-            "keywords": "climate, temperature, weather, australia",
-            "spatial_info": '{"coverage": "Australia", "coordinates": {"lat": -25, "lon": 135}}',
-            "temporal_info": '{"start_date": "2024-01-01", "end_date": "2024-12-31"}',
-            "formats": '{"primary_format": "CSV", "also_available": ["JSON", "NetCDF"]}',
-            "access_info": '{"access_type": "open", "download_url": "https://example.com/data"}'
-        },
+        access_info = AccessInfo(
+            reposited=access_reposited,
+            uri=access_uri,
+            description=access_description
+        )
         
-        "ai_guidance": {
-            "conversation_approach": [
-                "Iteratively step through all fields by asking the user to provide the information",
-                "Summarize before final registration"
-            ],
-            "search_tips": [
-                "When user mentions organization name, offer to search for it in the registry",
-                "Present search results clearly with numbers for selection - ensure you get the info surrounding the ID for UX",
-                "If search returns no results, suggest alternative search terms",
-                "Always verify the selected ID is the correct type (ORGANISATION vs PERSON)"
-            ],
+        created_date_obj = CreatedDate(relevant=True, value=created_date)
+        published_date_obj = PublishedDate(relevant=True, value=published_date)
+        
+        dataset_info_data = {
+            "name": name,
+            "description": description,
+            "publisher_id": publisher_id,
+            "created_date": created_date_obj,
+            "published_date": published_date_obj,
+            "license": license,
+            "access_info": access_info
         }
-    }
-    
-    await ctx.info("Successfully extracted schema from Provena models")
-    
-    return {
-        "status": "success",
-        "schema": schema,
-        "message": "Use this to guide dataset registration - Ask the user step-by-step for each field (including ethics) starting with display name, until all fields are complete"
-    }
+        
+        optional_fields = {
+            "purpose": purpose,
+            "rights_holder": rights_holder,
+            "usage_limitations": usage_limitations,
+            "preferred_citation": preferred_citation,
+        }
+        
+        for field, value in optional_fields.items():
+            if value is not None:
+                dataset_info_data[field] = value
+        
+        if any([spatial_coverage, spatial_extent, spatial_resolution]):
+            async def _to_ewkt(val: Optional[str], field: str) -> Optional[str]:
+                if not val:
+                    return val
+                s = val.strip()
+                if not s:
+                    return None
+                if not s.upper().startswith("SRID="):
+                    await ctx.warn(f"{field} provided without SRID. Assuming EPSG:4326 and converting to EWKT.")
+                    s = f"SRID=4326;{s}"
+                if len(s) > 50000:
+                    await ctx.warn(f"{field} exceeds 50,000 characters and may be rejected by schema constraints.")
+                return s
+
+            norm_coverage = await _to_ewkt(spatial_coverage, "spatial_coverage")
+            norm_extent = await _to_ewkt(spatial_extent, "spatial_extent")
+
+            if spatial_resolution:
+                try:
+                    float(spatial_resolution.strip())
+                except Exception:
+                    await ctx.warn("spatial_resolution should be a decimal degrees string (e.g., '0.01').")
+
+            spatial_info = CollectionFormatSpatialInfo(
+                coverage=norm_coverage,
+                extent=norm_extent,
+                resolution=spatial_resolution
+            )
+            dataset_info_data["spatial_info"] = spatial_info
+        
+        if temporal_begin_date and temporal_end_date:
+            duration = TemporalDurationInfo(
+                begin_date=temporal_begin_date,
+                end_date=temporal_end_date
+            )
+            temporal_info = CollectionFormatTemporalInfo(
+                duration=duration,
+                resolution=temporal_resolution
+            )
+            dataset_info_data["temporal_info"] = temporal_info
+        
+        if formats:
+            formats_list = [f.strip() for f in formats.split(',') if f.strip()]
+            dataset_info_data["formats"] = formats_list
+        
+        if keywords:
+            keywords_list = [k.strip() for k in keywords.split(',') if k.strip()]
+            dataset_info_data["keywords"] = keywords_list
+        
+        if user_metadata:
+            try:
+                import json
+                metadata_dict = json.loads(user_metadata)
+                if isinstance(metadata_dict, dict):
+                    string_metadata = {k: str(v) for k, v in metadata_dict.items()}
+                    dataset_info_data["user_metadata"] = string_metadata
+            except json.JSONDecodeError:
+                await ctx.warn(f"Invalid JSON in user_metadata, skipping: {user_metadata}")
+        
+        associations_data = {"organisation_id": organisation_id}
+        if data_custodian_id:
+            associations_data["data_custodian_id"] = data_custodian_id
+        if point_of_contact:
+            associations_data["point_of_contact"] = point_of_contact
+        
+        approvals_data = {
+            "ethics_registration": {
+                "relevant": ethics_registration_relevant,
+                "obtained": ethics_registration_obtained
+            },
+            "ethics_access": {
+                "relevant": ethics_access_relevant,
+                "obtained": ethics_access_obtained
+            },
+            "indigenous_knowledge": {
+                "relevant": indigenous_knowledge_relevant,
+                "obtained": indigenous_knowledge_obtained
+            },
+            "export_controls": {
+                "relevant": export_controls_relevant,
+                "obtained": export_controls_obtained
+            }
+        }
+        
+        collection_format = CollectionFormat(
+            dataset_info=CollectionFormatDatasetInfo(**dataset_info_data),
+            associations=CollectionFormatAssociations(**associations_data),
+            approvals=CollectionFormatApprovals(**approvals_data)
+        )
+        
+        
+        result = await client.datastore.mint_dataset(dataset_mint_info=collection_format)
+
+
+        
+        if not result.status.success:
+            await ctx.error(f"Registration failed: {result.status.details}")
+            return {"status": "error", "message": result.status.details}
+        new_id = result.id
+        await ctx.info(f"Dataset registered successfully with ID: {new_id}")
+        
+        return {
+            "status": "success",
+            "dataset_id": new_id,
+            "message": f"Dataset '{name}' registered successfully",
+            "handle_url": f"https://hdl.handle.net/{new_id}"
+        }
+        
+    except Exception as e:
+        await ctx.error(f"Registration failed: {str(e)}")
+        return {"status": "error", "message": str(e)}
+
         
 
 if __name__ == "__main__":
