@@ -955,7 +955,7 @@ async def register_dataset(
         if not result.status.success:
             await ctx.error(f"Registration failed: {result.status.details}")
             return {"status": "error", "message": result.status.details}
-        new_id = result.id
+        new_id = result.handle
         await ctx.info(f"Dataset registered successfully with ID: {new_id}")
         
         return {
