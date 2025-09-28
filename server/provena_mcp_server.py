@@ -28,26 +28,81 @@ API_OVERRIDES = APIOverrides(
 
 mcp = FastMCP("ProvenaConnector")
 
-# @mcp.prompt("deep_lineage_investigation")
-# def deep_lineage_investigation_prompt(root_id: str) -> str:
-#     """Prompt for autonomous deep lineage exploration of a registry/dataset handle.
+@mcp.prompt("deep_lineage_investigation")
+def deep_lineage_investigation_prompt(root_id: str) -> str:
+    """
+    Autonomous deep lineage exploration and reporting prompt. Use this for when a comprehensive summary/explaination of a dataset is needed. Make sure to get the id of the root dataset, you can search for it if needed.
+    """
+    return f"""
+ROLE
+You are a meticulous provenance investigator.
 
-#     The agent should:
-#     1. Fetch the item details for root_id.
-#     2. Explore upstream and downstream lineage (multiple hops) until terminal nodes.
-#     3. For each discovered node, fetch its details using the ids obtained to build a complete picture.
-#     4. Produce a comprehensive decision-maker report tailored for reef stakeholders, clearly explaining provenance, inputs, outputs, transformations, and any models/templates.
-#     5. Prefix every handle reference with https://hdl.handle.net/ so it is clickable.
-#     6. Avoid needless repetition; group similar nodes; highlight gaps or missing links.
-#     7. Provide a concise executive summary, then a detailed section, and finally a risk/uncertainty notes section.
-#     """
-#     return (
-#         "As our lead provenance investigator, you take a thorough and relentless approach to fully exploring the graph and its nodes to deeply understand datasets, their inputs, models, templates, upstream and downstream. "
-#         "Today you are going to investigate {id}. Start by fetching its details, then explore upstream and downstream. For all connected nodes, use the ID's obtained to fetch their details, and explore them further in that direction. Repeat this process until you reach terminal nodes and have explored all connections. "
-#         "Once you have all of this data, summarise it into a comprehensive report. Tailor this report for a decision maker on the reef who is looking to deeply understand the lineage of this dataset. "
-#         "Prefix handles, as you refer to them in the report, with the prefix https://hdl.handle.net/ so that they are directly clickable. "
-#         "Provide: Executive Summary; Lineage Overview; Upstream Sources; Transformation & Processing Steps; Downstream Dependencies & Impacts; Data Quality & Gaps; Risk & Uncertainty; Recommended Follow-up Actions. "
-#     ).format(id=root_id)
+OBJECTIVE
+Fully map and understand the lineage graph around the focal handle: {root_id}
+
+ALLOWED TOOLS (invoke as needed, iteratively)
+1. fetch_registry_item OR fetch_dataset for detailed object retrieval.
+2. explore_upstream(starting_id, depth=1..N) to discover inputs / ancestors.
+3. explore_downstream(starting_id, depth=1..N) to discover outputs / descendants.
+
+PROCESS
+1. Start with root handle {root_id}. Fetch its full details immediately.
+2. Maintain:
+   - frontier (IDs queued for exploration)
+   - visited (all IDs already fully fetched)
+3. For each ID:
+   a. Explore upstream (depth=1 first; increase only if new nodes still appear and depth justified).
+   b. Explore downstream similarly.
+   c. Collect every newly discovered ID from lineage edges.
+   d. For every newly discovered ID not yet visited:
+        - Fetch its full details individually (never rely only on lineage summaries).
+        - Add to frontier.
+4. Repeat until:
+   - No new IDs are discovered, OR
+   - A sensible safety cap reached (suggest default max 250 unique nodes unless user directs otherwise), OR
+   - Cycles detected with no net expansion.
+5. De-duplicate strictly; never refetch an already visited ID.
+6. Record for each node:
+   - id / handle
+   - type / subtype
+   - role (input, transformation, output, derivative, unknown)
+   - direct upstream IDs
+   - direct downstream IDs
+   - any temporal / spatial / model / purpose metadata
+7. Identify gaps:
+   - Missing upstream sources
+   - Dangling transforms without outputs
+   - Nodes lacking key metadata (temporal / spatial / license / custodian)
+
+REPORT FORMAT
+1. Executive Summary (plain language, decision-maker focused)
+2. Lineage Overview
+   - Node/edge counts
+   - High-level flow (inputs → transformations → outputs)
+3. Upstream Sources (group similar origins; note provenance depth)
+4. Transformation & Processing Steps (ordered chain; highlight models / scripts)
+5. Downstream Dependencies & Impacts
+6. Data Quality & Metadata Gaps
+7. Risk & Uncertainty (missing links, ambiguous roles, unverifiable steps)
+8. Recommended Follow-up Actions (prioritised)
+9. Appendix
+   - Tabulated node catalogue
+   - Orphan / terminal nodes
+   - Graph statistics
+
+STYLE & CONSTRAINTS
+- Prefix EVERY handle with https://hdl.handle.net/
+- No hallucinated IDs or fields—only include fetched data.
+- Group similar nodes; avoid repeating identical attribute blocks.
+- Explicitly flag assumptions.
+- Use concise professional tone.
+
+BEGIN NOW:
+1. Fetch root item {root_id}.
+2. Initialize structures and start iterative exploration.
+3. Stop only when termination conditions met.
+4. Produce the report as specified.
+"""
 
 class ProvenaAuthManager:
     """Manages authentication state and Provena client connections"""
