@@ -314,6 +314,7 @@ def dataset_registration_workflow() -> str:
     === PHASE 2: COLLECT INFORMATION ===
     Look at the register_dataset tool documentation to see all fields.
     Ask for each field conversationally - ENSURE YOU ASK TO COLLECT INFORMATION FOR EVERY SINGLE FIELD. This includes all of the Important, access, approval, metadata, spatial data, temporal data, list, user metadata and peope data fields.
+    IMPORTANT: You do not need to ask for a specific format, just convert what the user provides into the expected format. Clarify with the user if needed.
 
     === PHASE 3: VALIDATION & CONFIRMATION ===
     Show complete summary and get explicit confirmation
@@ -856,16 +857,16 @@ async def register_dataset(
     IMPORTANT FIELDS
     - name: Dataset name
     - description: Detailed description
-    - publisher_id: publisher ID (use search_registry)
-    - organisation_id: ORGANISATION ID (record creator)
-    - created_date: YYYY-MM-DD
-    - published_date: YYYY-MM-DD
+    - publisher_id: publisher ID (must be an organisation - can use search_registry to find if unsure)
+    - organisation_id: ORGANISATION ID (record creator - must be an organisation - can use search_registry to find if unsure)
+    - created_date: user can provide in any common format, convert to YYYY-MM-DD format
+    - published_date: user can provide in any common format, convert to YYYY-MM-DD format
     - license: License URI (e.g., https://creativecommons.org/licenses/by/4.0/)
 
-    ACCESS INFORMATION FIELDS (ensure you ask about these)
-    - access_reposited: Stored in Data Store? (default True)
-    - access_uri: URI if externally hosted (optional; recommended if not reposited)
-    - access_description: How to access externally hosted data (optional)
+    ACCESS INFORMATION FIELDS (ensure you ask about these - if reposited is False, you must ask for URI and description, otherwise skip them if reposited is True)
+    - access_reposited: Is the data reposited? 
+    - access_uri: URI if externally hosted (optional - skip if access_reposited is True)
+    - access_description: How to access externally hosted data (optional - skip if access_reposited is True)
 
     APPROVALS FIELDS (booleans for true or false)
     - ethics_registration_relevant, ethics_registration_obtained (if not relevant, obtained is false, and you do not need to ask)
@@ -874,10 +875,10 @@ async def register_dataset(
     - export_controls_relevant, export_controls_obtained (if not relevant, obtained is false, and you do not need to ask)
  
     METADATA FIELDS (ensure you ask about these)
-    - purpose: Why the dataset was created
-    - rights_holder: Who owns/manages rights
-    - usage_limitations:  Access/use restrictions
-    - preferred_citation: How to cite this dataset
+    - purpose: Why the dataset was created (optional, so skip if user does not have one)
+    - rights_holder: Who owns/manages rights (optional, so skip if user does not have one)
+    - usage_limitations:  Access/use restrictions (optional, so skip if user does not have one)
+    - preferred_citation: How to cite this dataset (optional, so skip if user does not have one)
 
     SPATIAL DATA FIELDS (ensure you ask about these)
     - spatial_info: Ask if they want to provide spatial information, if not, skip all spatial fields
@@ -887,19 +888,19 @@ async def register_dataset(
 
     TEMPORAL DATA FIELDS (ensure you ask about these)
     - temporal_info: Ask if they want to provide temporal information, if not, skip all temporal fields
-    - temporal_begin_date, temporal_end_date: collect both or neither (YYYY-MM-DD)
+    - temporal_begin_date, temporal_end_date: Collect both or neither - cannot just have one (YYYY-MM-DD)
     - temporal_resolution: ISO8601 duration (e.g., P1D)
 
     LIST DATA FIELDS (ensure you ask about these)
-    - formats: Comma-separated (e.g., "CSV, JSON")
-    - keywords: Comma-separated tags
+    - formats: Comma-separated format (e.g., "CSV, JSON")(optional, so skip if user does not have one)
+    - keywords: Comma-separated format tags - just ask for keywords and convert to proper format (optional, so skip if user does not have one)
 
     user_metadata DATA FIELDS (ensure you ask about these)
-    - JSON object string; values will be stringified
+    - JSON object string; values will be stringified (optional, so skip if user does not have one)
 
     PEOPLE DATA FIELDS (ensure you ask about these)
-    - data_custodian_id: PERSON ID (use search_registry)
-    - point_of_contact: Free-text contact details (e.g., email)
+    - data_custodian_id: PERSON ID (use search_registry) (optional, so skip if user does not have one)
+    - point_of_contact: Free-text contact details (e.g., email) (optional, so skip if user does not have one)
 
     Returns:
         Dict with registration status and dataset_id (handle)
