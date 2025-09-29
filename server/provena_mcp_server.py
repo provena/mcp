@@ -405,23 +405,19 @@ async def search_registry(ctx: Context, query: str, limit: Optional[int] = 25, s
         search_results = []
         if results.results:
             for result in results.results:
-                # Fetch the full item and dump all its information
                 try:
                     item_result = await client.registry.general_fetch_item(id=result.id)
                     if item_result.status.success and item_result.item:
                         item_data = _dump(item_result.item)
-                        # Add the search score to the dumped data
                         item_data["search_score"] = result.score
                         search_results.append(item_data)
                     else:
-                        # Fallback if fetch fails
                         search_results.append({
                             "id": result.id,
                             "search_score": result.score,
                             "error": "Unable to fetch full item details"
                         })
                 except Exception as fetch_error:
-                    # Include the result even if fetching details fails
                     search_results.append({
                         "id": result.id,
                         "search_score": result.score,
@@ -1024,7 +1020,7 @@ async def register_dataset(
         await ctx.error(f"Registration failed: {str(e)}")
         return {"status": "error", "message": str(e)}
 
-        
+
 
 if __name__ == "__main__":
     if "--http" in sys.argv:
