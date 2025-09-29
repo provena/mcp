@@ -215,6 +215,7 @@ Let's start with the required fields:
 
 **AI:** 7. Would you like to include any additional metadata?  
 **You:** mcpbotversion - v9000
+
 **AI:** Thank you! I've noted the additional metadata: `{"mcpbotversion": "v9000"}`
 
 ---
@@ -253,15 +254,6 @@ You are about to call `create_person` with the following arguments:
 
 **You:** yes
 
-```
-[create_person result]: {
-  "status": "success",
-  "person_id": "[redacted]",
-  "message": "Person 'MCP Robot' registered successfully",
-  "handle_url": "https://hdl.handle.net/[redacted]"
-}
-```
-
 **AI:** The user "MCP Robot" has been registered successfully! Here are the details:
 - **Person ID:** 10378.1/1985046
 - **Link to Profile:** [https://hdl.handle.net/[redacted]](https://hdl.handle.net/[redacted])
@@ -275,7 +267,7 @@ You are about to call `create_person` with the following arguments:
 Let's start with the required information:
 
 1. **What is the name of the organization?**  
-**You:** Provena Test Org
+**You:** MCP Org
 
 **AI:** 2. **What is the display name of the organization?** (This is optional; if you want it to be the same as the name, you can just say "same".)  
 **You:** same
@@ -288,8 +280,8 @@ Let's start with the required information:
 
 **AI:** Here's a summary of the information collected for your organization registration:
 
-- **Name:** Provena Test Org  
-- **Display Name:** Provena Test Org (same as name)  
+- **Name:** MCP Org 
+- **Display Name:** MCP Org (same as name)  
 - **ROR:** None  
 - **User Metadata:** {"testkey": "testvalue"}
 
@@ -302,8 +294,8 @@ You are about to call `create_organisation` with the following arguments:
 
 ```json
 {
-  "name": "Provena Test Org",
-  "display_name": "Provena Test Org",
+  "name": "MCP Org",
+  "display_name": "MCP Org",
   "ror": null,
   "user_metadata": {
     "testkey": "testvalue"
@@ -313,15 +305,7 @@ You are about to call `create_organisation` with the following arguments:
 
 **You:** yes
 
-```
-[create_organisation result]: {
-  "status": "success",
-  "organisation_id": "[redacted]",
-  "message": "Organisation 'Provena Test Org' registered successfully"
-}
-```
-
-**AI:** The organization "Provena Test Org" has been registered successfully!  
+**AI:** The organization "MCP Org" has been registered successfully!  
 You can access it using the following ID: [https://hdl.handle.net/[redacted]](https://hdl.handle.net/[redacted]).
 
 ---
