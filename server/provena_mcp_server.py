@@ -281,7 +281,21 @@ def _dump(obj):
 #     }
 #     await ctx.info("Auth diagnostics generated.")
 #     return details
+@mcp.prompt("handle_linking")
+def handle_linking_prompt() -> str:
+    """
+    Always provide the full handle URL for any Provena record when the user asks for a link.
 
+    INSTRUCTIONS:
+    - If the user requests a link to a record (dataset, person, organisation, etc.), always respond with the full handle URL in the format: https://hdl.handle.net/<id>
+    - Replace <id> with the actual record ID.
+    - Do not provide just the ID or a partial link—always use the full URL.
+    - Example: If the record ID is "12345/abcde", respond with "https://hdl.handle.net/12345/abcde"
+    """
+    return (
+        "If the user asks for a link to a record, always reply with the full handle URL: "
+        "https://hdl.handle.net/<id> (replace <id> with the actual record ID)."
+    )
 @mcp.prompt("dataset_registration_workflow")
 def dataset_registration_workflow() -> str:
     """
@@ -291,25 +305,52 @@ def dataset_registration_workflow() -> str:
     and ensures all required information is collected and validated.
     """
     return """
-You are a Provena dataset registration specialist. Follow this EXACT workflow:
+    You are a Provena dataset registration specialist. Follow this EXACT workflow:
 
-=== PHASE 1: INITIALIZATION ===
-1. Greet user and explain you'll help register a dataset
-2. Explain the process: collect required info → optional info → summary → confirmation → registration
+    === PHASE 1: INITIALIZATION ===
+    1. Greet user and explain you'll help register a dataset
+    2. Explain the process: collect required info → optional info → summary → confirmation → registration
 
-=== PHASE 2: COLLECT INFORMATION ===
-Look at the register_dataset tool documentation to see all fields.
-Ask for each field conversationally - ENSURE YOU ASK TO COLLECT INFORMATION FOR EVERY SINGLE FIELD. This includes all of the Important, access, approval, metadata, spatial data, temporal data, list, user metadata and peope data fields.
+    === PHASE 2: COLLECT INFORMATION ===
+    Look at the register_dataset tool documentation to see all fields.
+    Ask for each field conversationally - ENSURE YOU ASK TO COLLECT INFORMATION FOR EVERY SINGLE FIELD. This includes all of the Important, access, approval, metadata, spatial data, temporal data, list, user metadata and peope data fields.
 
-=== PHASE 3: VALIDATION & CONFIRMATION ===
-Show complete summary and get explicit confirmation
+    === PHASE 3: VALIDATION & CONFIRMATION ===
+    Show complete summary and get explicit confirmation
 
-=== PHASE 4: REGISTRATION ===
-Call register_dataset with ALL collected information
+    === PHASE 4: REGISTRATION ===
+    Call register_dataset with ALL collected information
 
-CRITICAL: Never call register_dataset until ALL required info collected and confirmed.
-"""
+    CRITICAL: Never call register_dataset until ALL required info collected and confirmed.
+    """
 
+@mcp.prompt("other_registration_workflow")
+def other_registration_workflow() -> str:
+    """
+    Guided registration workflow that ensures complete data collection for other entities.
+
+    This prompt creates a systematic process that prevents premature registration
+    and ensures all required information is collected and validated.
+    """
+    return """
+    You are a Provena registration specialist. Follow this EXACT workflow:
+
+    === PHASE 1: INITIALIZATION ===
+    1. Greet user and explain you'll help register an entity
+    2. Explain the process: collect required info → optional info → summary → confirmation → registration
+
+    === PHASE 2: COLLECT INFORMATION ===
+    Look at the relevant tool documentation to see all fields.
+    Ask for each field conversationally - ENSURE YOU ASK TO COLLECT INFORMATION FOR EVERY SINGLE FIELD. 
+
+    === PHASE 3: VALIDATION & CONFIRMATION ===
+    Show complete summary and get explicit confirmation
+
+    === PHASE 4: REGISTRATION ===
+    Call the relevant tool with ALL collected information
+
+    CRITICAL: Never call desired tool until ALL required info collected and confirmed.
+    """
 @mcp.tool()
 async def login_to_provena(ctx: Context) -> Dict[str, Any]:
     """
@@ -1019,8 +1060,155 @@ async def register_dataset(
     except Exception as e:
         await ctx.error(f"Registration failed: {str(e)}")
         return {"status": "error", "message": str(e)}
+@mcp.tool()
+async def create_person(
+    ctx: Context,
+    first_name: str,
+    last_name: str,
+    email: str,
+    display_name: Optional[str] = None, 
+    orcid: Optional[str] = None,
+    ethics_approved: bool = True,
+    user_metadata: Optional[Dict[str, str]] = None
+) -> Dict[str, Any]:
+    """
+    Register a new person in the Provena registry.
 
+    CRITICAL: Never call this tool until ALL required info collected and confirmed. Do NOT skip any fields and DO NOT make assumptions. - If any required field is missing, ask the user for it. Do not guess or invent values.
 
+    IMPORTANT WORKFLOW - Follow this exact process:
+    1. Ask user for EACH AND EVERY field conversationally, one by one
+    2. Show complete summary of ALL collected information
+    3. Get explicit user confirmation before calling this tool
+
+    IMPORTANT FIELDS
+    - first_name: Given name(s)
+    - last_name: Family name(s)
+    - email: Contact email
+    - display_name: Display name (optional; defaults to "first_name+last_name")
+    - orcid: ORCID iD (optional; can be just the ID or full URL)
+    - ethics_approved: Ethics approved for registry (default True)
+    - user_metadata: Optional dictionary of additional metadata (string values)
+    """
+    client = await require_authentication(ctx)
+    if not client:
+        return {"status": "error", "message": "Authentication required"}
+    
+    try:
+        from pydantic import ValidationError
+        from ProvenaInterfaces.RegistryModels import PersonDomainInfo
+        
+        final_display_name = display_name or f"{first_name.strip()} {last_name.strip()}"
+        
+        orcid_url = None
+        if orcid:
+            orcid = orcid.strip()
+            if orcid and not orcid.startswith("http"):
+                orcid_url = f"https://orcid.org/{orcid}"
+            else:
+                orcid_url = orcid
+        
+        person_info = PersonDomainInfo(
+            display_name=final_display_name,
+            first_name=first_name.strip(),
+            last_name=last_name.strip(),
+            email=email.strip(),
+            orcid=orcid_url,
+            ethics_approved=ethics_approved,
+            user_metadata=user_metadata
+        )
+
+        result = await client.registry.person.create_item(
+            create_item_request=person_info
+        )
+        
+        if not getattr(result.status, "success", False):
+            return {
+                "status": "error",
+                "message": getattr(result.status, "details", "Unknown failure"),
+            }
+        
+        created_id = getattr(result, "created_item_id", None) or getattr(result, "id", None)
+        
+        await ctx.info(f"Person '{final_display_name}' registered with ID: {created_id}")
+        
+        return {
+            "status": "success",
+            "person_id": created_id,
+            "message": f"Person '{final_display_name}' registered successfully",
+            "handle_url": f"https://hdl.handle.net/{created_id}" if created_id else None
+        }
+    
+    except ValidationError as ve:
+        await ctx.error(f"Validation failed: {ve}")
+        return {
+            "status": "error",
+            "message": "Validation failed",
+            "details": [{"field": err["loc"], "message": err["msg"]} for err in ve.errors()]
+        }
+    except Exception as e:
+        await ctx.error(f"Person creation failed: {str(e)}")
+        return {"status": "error", "message": str(e)}
+    
+@mcp.tool()
+async def create_organisation(
+    ctx: Context,
+    name: str,
+    ror: Optional[str] = None,
+    user_metadata: Optional[Dict[str, str]] = None
+) -> Dict[str, Any]:
+    """
+    Register a new organisation in the Provena registry.
+
+    DO NOT USE UNTIL THE USER HAS PROVIDED ALL REQUIRED INFORMATION AND CONFIRMED.
+
+    IMPORTANT WORKFLOW - Follow this exact process:
+    1. Ask user for EACH AND EVERY field conversationally, one by one in the
+    2. Show complete summary of ALL collected information
+    3. Get explicit user confirmation before calling this tool
+
+    IMPORTANT FIELDS
+    - name: Organisation name
+    - ror: ROR iD or URL (optional; can be just the ID or full URL)
+    - user_metadata: Optional dictionary of additional metadata (string values) 
+    """
+    client = await require_authentication(ctx)
+    if not client:
+        return {"status": "error", "message": "Authentication required"}
+
+    try:
+        from pydantic import ValidationError
+        from ProvenaInterfaces.RegistryModels import OrganisationDomainInfo
+
+        display_name = name.strip()
+
+        ror_url = ror.strip() if ror else None
+        if ror_url and not ror_url.startswith("http"):
+            ror_url = f"https://ror.org/{ror_url}"
+
+        org_info = OrganisationDomainInfo(
+            display_name=display_name,
+            name=name,
+            ror=ror_url,
+            user_metadata=user_metadata
+        )
+
+        result = await client.registry.organisation.create_item(
+            create_item_request=org_info
+        )
+
+        if not result.status.success:
+            return {"status": "error", "message": result.status.details}
+
+        return {
+            "status": "success",
+            "organisation_id": result.created_item_id,
+            "message": f"Organisation '{name}' registered successfully"
+        }
+    except ValidationError as ve:
+        return {"status": "error", "message": "Validation failed", "details": ve.errors()}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 if __name__ == "__main__":
     if "--http" in sys.argv:
