@@ -9,6 +9,11 @@ load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 MODEL = "gpt-4o-mini"
 
+CONFIRMATION_TOOLS = {
+    "register_dataset",
+    "create_person",
+    "create_organisation",
+}
 if not OPENAI_API_KEY:
     raise SystemExit("Set OPENAI_API_KEY in your .env file.")
 
@@ -171,6 +176,19 @@ async def ai_chat_loop():
                                         "content": f"Workflow Instructions: {prompt_content}"
                                     })
                                 else:
+                                    # Regular tool call
+                                    if tool_name in CONFIRMATION_TOOLS:
+                                        print(f"\n[Confirmation Required] You are about to call '{tool_name}' with the following arguments:")
+                                        print(json.dumps(args, indent=2))
+                                        confirm = input("Would you like to proceed with this action? (yes/no): ").strip().lower()
+                                        if confirm not in ("yes", "y"):
+                                            print(f"Cancelled call to {tool_name}.")
+                                            messages.append({
+                                                "role": "tool",
+                                                "tool_call_id": tool_call.id,
+                                                "content": json.dumps({"status": "cancelled", "message": f"User cancelled call to {tool_name}."})
+                                            })
+                                            continue  # Skip this tool call
                                     # Regular tool call
                                     result = await client.call_tool(tool_name, args)
                                     data = extract_tool_result(result)

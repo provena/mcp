@@ -328,7 +328,7 @@ def dataset_registration_workflow() -> str:
 @mcp.prompt("other_registration_workflow")
 def other_registration_workflow() -> str:
     """
-    Guided registration workflow that ensures complete data collection for other entities.
+    Guided registration workflow that ensures complete data collection for other entities like organizations and persons.
 
     This prompt creates a systematic process that prevents premature registration
     and ensures all required information is collected and validated.
@@ -889,7 +889,7 @@ async def register_dataset(
     TEMPORAL DATA FIELDS (ensure you ask about these)
     - temporal_info: Ask if they want to provide temporal information, if not, skip all temporal fields
     - temporal_begin_date, temporal_end_date: Collect both or neither - cannot just have one (YYYY-MM-DD)
-    - temporal_resolution: ISO8601 duration (e.g., P1D)
+    - temporal_resolution: ISO8601 duration (e.g., P1D) (if given in a different format, convert to ISO8601)
 
     LIST DATA FIELDS (ensure you ask about these)
     - formats: Comma-separated format (e.g., "CSV, JSON")(optional, so skip if user does not have one)
@@ -1076,6 +1076,7 @@ async def create_person(
     Register a new person in the Provena registry.
 
     CRITICAL: Never call this tool until ALL required info collected and confirmed. Do NOT skip any fields and DO NOT make assumptions. - If any required field is missing, ask the user for it. Do not guess or invent values.
+    DO NOT USE UNTIL THE USER HAS PROVIDED ALL REQUIRED INFORMATION AND CONFIRMED. Use the prompt other_registration_workflow to guide the user.
 
     IMPORTANT WORKFLOW - Follow this exact process:
     1. Ask user for EACH AND EVERY field conversationally, one by one
@@ -1088,8 +1089,12 @@ async def create_person(
     - email: Contact email
     - display_name: Display name (optional; defaults to "first_name+last_name")
     - orcid: ORCID iD (optional; can be just the ID or full URL)
-    - ethics_approved: Ethics approved for registry (default True)
-    - user_metadata: Optional dictionary of additional metadata (string values)
+    - ethics_approved: Ethics approved for registry (default True) (True/False)
+    - user_metadata: Dictionary of additional metadata (string values) - DO NOT STRINGIFY. (optional but still ask)
+        - example: 
+            user_metadata": {
+                "party": "hufflepuff"
+            }
     """
     client = await require_authentication(ctx)
     if not client:
@@ -1128,16 +1133,16 @@ async def create_person(
                 "status": "error",
                 "message": getattr(result.status, "details", "Unknown failure"),
             }
-        
-        created_id = getattr(result, "created_item_id", None) or getattr(result, "id", None)
-        
+
+        created_id = result.created_item.id
+
         await ctx.info(f"Person '{final_display_name}' registered with ID: {created_id}")
         
         return {
             "status": "success",
-            "person_id": created_id,
-            "message": f"Person '{final_display_name}' registered successfully",
-            "handle_url": f"https://hdl.handle.net/{created_id}" if created_id else None
+            "organisation_id": result.created_item.id,
+            "message": f"Organisation registered successfully",
+            "handle_url": f"https://hdl.handle.net/{result.created_item.id}" if result.created_item.id else None
         }
     
     except ValidationError as ve:
@@ -1155,6 +1160,7 @@ async def create_person(
 async def create_organisation(
     ctx: Context,
     name: str,
+    display_name: Optional[str] = None, 
     ror: Optional[str] = None,
     user_metadata: Optional[Dict[str, str]] = None
 ) -> Dict[str, Any]:
@@ -1170,6 +1176,7 @@ async def create_organisation(
 
     IMPORTANT FIELDS
     - name: Organisation name
+    - display_name: Display name (optional; defaults to name)
     - ror: ROR iD or URL (optional; can be just the ID or full URL)
     - user_metadata: Optional dictionary of additional metadata (string values) 
     """
@@ -1181,14 +1188,14 @@ async def create_organisation(
         from pydantic import ValidationError
         from ProvenaInterfaces.RegistryModels import OrganisationDomainInfo
 
-        display_name = name.strip()
+        final_display_name = display_name.strip() if display_name else name.strip()
 
         ror_url = ror.strip() if ror else None
         if ror_url and not ror_url.startswith("http"):
             ror_url = f"https://ror.org/{ror_url}"
 
         org_info = OrganisationDomainInfo(
-            display_name=display_name,
+            display_name=final_display_name,
             name=name,
             ror=ror_url,
             user_metadata=user_metadata
@@ -1203,8 +1210,8 @@ async def create_organisation(
 
         return {
             "status": "success",
-            "organisation_id": result.created_item_id,
-            "message": f"Organisation '{name}' registered successfully"
+            "organisation_id": result.created_item.id,
+            "message": f"Organisation '{final_display_name}' registered successfully"
         }
     except ValidationError as ve:
         return {"status": "error", "message": "Validation failed", "details": ve.errors()}
