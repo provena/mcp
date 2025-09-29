@@ -202,7 +202,9 @@ Let's start with the required fields:
 **AI:** Got it! The user's email is mcprobot@botmail.com.
 
 **AI:** 4. Would you like to provide a display name for the user? This field is optional and defaults to the combination of the first and last name.
+
 **You:** use default  
+
 **AI:** Understood! I'll use the default display name, which will be "MCP Robot."
 
 **AI:** 5. Does the user have an ORCID iD?  
@@ -267,6 +269,7 @@ You are about to call `create_person` with the following arguments:
 Let's start with the required information:
 
 1. **What is the name of the organization?**  
+
 **You:** MCP Org
 
 **AI:** 2. **What is the display name of the organization?** (This is optional; if you want it to be the same as the name, you can just say "same".)  
