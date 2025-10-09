@@ -13,6 +13,8 @@ CONFIRMATION_TOOLS = {
     "register_dataset",
     "create_person",
     "create_organisation",
+    "create_model",
+    "create_dataset_template",
 }
 if not OPENAI_API_KEY:
     raise SystemExit("Set OPENAI_API_KEY in your .env file.")
