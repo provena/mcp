@@ -299,22 +299,28 @@ def handle_linking_prompt() -> str:
 @mcp.prompt("dataset_registration_workflow")
 def dataset_registration_workflow() -> str:
     """
-    Guided dataset registration workflow that ensures complete data collection.
-    
+    Guided DATASET (data store item) registration workflow that ensures complete data collection.
+
+    IMPORTANT: This is for registering DATASETS (actual data in the data store), NOT dataset templates - use the register_entity_workflow prompt.
+    For dataset templates, use the register_entity_workflow prompt.
+
     This prompt creates a systematic process that prevents premature registration
     and ensures all required information is collected and validated.
     """
     return """
-    You are a Provena dataset registration specialist. Follow this EXACT workflow:
+    You are a Provena DATASET registration specialist. Follow this EXACT workflow:
+
+    IMPORTANT: This workflow is for registering DATASETS (actual data items), NOT dataset templates.
+    Dataset templates are registered using a different process.
 
     === PHASE 1: INITIALIZATION ===
     1. Check if logged in, if not, stop and ask the user to log in first (do not just use the login tool, engage the user)
-    2. Greet user and explain you'll help register a dataset
+    2. Greet user and explain you'll help register a DATASET (actual data, not a template)
     3. Explain the process: collect required info → optional info → summary → confirmation → registration
 
     === PHASE 2: COLLECT INFORMATION ===
     Look at the register_dataset tool documentation to see all fields.
-    Ask for each field conversationally - ENSURE YOU ASK TO COLLECT INFORMATION FOR EVERY SINGLE FIELD. This includes all of the Important, access, approval, metadata, spatial data, temporal data, list, user metadata and peope data fields.
+    Ask for each field conversationally - ENSURE YOU ASK TO COLLECT INFORMATION FOR EVERY SINGLE FIELD. This includes all of the Important, access, approval, metadata, spatial data, temporal data, list, user metadata and people data fields.
     IMPORTANT: You do not need to ask for a specific format, just convert what the user provides into the expected format. Clarify with the user if needed.
 
     === PHASE 3: VALIDATION & CONFIRMATION ===
@@ -326,10 +332,10 @@ def dataset_registration_workflow() -> str:
     CRITICAL: Never call register_dataset until ALL required info collected and confirmed.
     """
 
-@mcp.prompt("other_registration_workflow")
-def other_registration_workflow() -> str:
+@mcp.prompt("register_entity_workflow")
+def register_entity_workflow() -> str:
     """
-    Guided registration workflow that ensures complete data collection for other entities like organizations, persons, models, and dataset templates.
+    Guided registration workflow that ensures complete data collection for other entities like organizations, persons, models.
 
     This prompt creates a systematic process that prevents premature registration
     and ensures all required information is collected and validated.
@@ -338,7 +344,7 @@ def other_registration_workflow() -> str:
     You are a Provena registration specialist. Follow this EXACT workflow:
 
     === PHASE 1: INITIALIZATION ===
-    1. Check if logged in, if not, prompt the user to login first (do not just use the login tool, engage the user)
+    1. Check if logged in, if not, prompt the user to login first (do not just use the login tool, engage the user, stop and ask them to log in)
     2. Greet user and explain you'll help register an entity
     3. Briefly explain the process: collect required info → optional info → summary → confirmation → registration
 
@@ -350,7 +356,6 @@ def other_registration_workflow() -> str:
     - For Organizations: name, display_name, ror (optional), user_metadata (optional)
     - For Persons: first_name, last_name, email, display_name (optional), orcid (optional), ethics_approved, user_metadata (optional)
     - For Models: name, description, documentation_url, source_url, display_name (optional), user_metadata (optional)
-    - For Dataset Templates: display_name, description (optional), defined_resources (optional), deferred_resources (optional), user_metadata (optional)
 
     === PHASE 3: VALIDATION & CONFIRMATION ===
     Show complete summary and get explicit confirmation
@@ -360,9 +365,150 @@ def other_registration_workflow() -> str:
     - create_organisation for organizations
     - create_person for persons
     - create_model for models
-    - create_dataset_template for dataset templates
 
     CRITICAL: Never call desired tool until ALL required info collected and confirmed.
+    """
+
+@mcp.prompt("dataset_template_workflow")
+def dataset_template_workflow() -> str:
+    """
+    Guided workflow for registering Dataset Templates with resource management.
+    
+    This prompt creates a systematic process for dataset template registration,
+    including the definition of defined and deferred resources.
+    """
+    return """
+    You are a Provena Dataset Template registration specialist. Follow this EXACT workflow:
+
+    === PHASE 1: INITIALIZATION ===
+    1. Check if logged in, if not, prompt the user to login first (do not just use the login tool, engage the user by stopping and asking they need to be logged in)
+    2. Greet user and explain you'll help register a Dataset Template
+    3. Explain what a dataset template is: "A dataset template defines the structure and expected files/resources for datasets used in model runs"
+    4. Explain the process: collect basic info → define resources → summary → confirmation → registration
+
+    === PHASE 2: COLLECT INFORMATION ===
+    Look at the relevant tool documentation to see all fields.
+    Ask for each field conversationally - ENSURE YOU ASK TO COLLECT INFORMATION FOR EVERY SINGLE FIELD, INCLUDING THE OPTIONAL ONES.
+
+    ENTITY-SPECIFIC GUIDANCE:
+    - For Dataset Templates: display_name, description (optional), defined_resources, deferred_resources, user_metadata (optional)
+    - For defined resources once they provide the first one, ask if they want to add another until they say no, then move on to deferred resources
+    - For deferred resources once they provide the first one, ask if they want to add another until they say no, then move on to user_metadata
+    MAKE SURE TO ASK FOR ALL FIELDS 
+
+    === PHASE 3: VALIDATION & CONFIRMATION ===
+    Show complete summary and get explicit confirmation
+
+    === PHASE 4: REGISTRATION ===
+    - create_dataset_template for dataset templates
+
+    === IMPORTANT NOTES ===
+    - Keep track of where you are in the workflow
+    - Never assume or skip steps
+    - Always show the full handle URL: https://hdl.handle.net/{id} for created templates
+    - Be patient and methodical when collecting resource definitions
+    - Validate that usage_type values are one of: GENERAL_DATA, CONFIG_FILE, FORCING_DATA, PARAMETER_FILE
+
+    CRITICAL: Never call create_dataset_template until ALL required info collected and confirmed.
+    """
+
+@mcp.prompt("workflow_template_registration")
+def workflow_template_registration() -> str:
+    """
+    Guided workflow for registering Model Run Workflow Templates with dependency management.
+    
+    This prompt creates a systematic process that handles the complexity of workflow templates,
+    including the potential need to create dependent entities (models and dataset templates).
+    """
+    return """
+    You are a Provena Model Run Workflow Template registration specialist. Follow this EXACT workflow:
+
+    === PHASE 1: INITIALIZATION ===
+    1. Check if logged in, if not, prompt the user to login first (do not just use the login tool, engage the user by stopping and asking they need to be logged in)
+    2. Greet user and explain you'll help register a Model Run Workflow Template
+    3. Explain what a workflow template is: "A workflow template defines the inputs, outputs, and structure for model run activities"
+    4. Explain the process: identify/create model → identify/create dataset templates → define annotations → summary → confirmation → registration
+
+    === PHASE 2: COLLECT MODEL INFORMATION ===
+    ASK: "Do you have an existing model registered, or do you need to create a new one?"
+    
+    IF SEARCH FOR EXISTING:
+    - Ask them for the model name or keywords to search for
+    - Use search_registry with subtype_filter="MODEL"
+    - Show results and ask user to select one
+    - Record the model_id
+    
+    IF CREATE NEW:
+    - Explain: "Let's create the model first, then we'll come back to the workflow template"
+    - Follow the model registration workflow (use register_entity_workflow prompt guidance)
+    - Use create_model tool
+    - Record the returned model_id
+    - Return to workflow template collection
+
+    === PHASE 3: COLLECT INPUT DATASET TEMPLATES ===
+    ASK: "Does your model require input datasets?" 
+    
+    IF YES, FOR EACH INPUT:
+    - ASK: "Do you have an existing dataset template, or create a new one?"
+    - IF SEARCH: Ask them for the dataset template name or keywords to search for. Use search_registry with subtype_filter="DATASET_TEMPLATE", record ID
+    - IF CREATE: Follow dataset_template_workflow
+    - ASK: "Is this input optional?" (true/false)
+    - Add to input_templates list: {"template_id": "ID", "optional": bool}
+    
+    Continue until user indicates no more inputs needed.
+
+    === PHASE 4: COLLECT OUTPUT DATASET TEMPLATES ===
+    ASK: "Does your model produce output datasets?"
+    
+    IF YES, FOR EACH OUTPUT:
+    - Same process as inputs
+    - Add to output_templates list
+    
+    Continue until user indicates no more outputs needed.
+
+    === PHASE 5: COLLECT ANNOTATIONS ===
+    ASK: "Do you want to specify required annotations for model runs?" 
+    EXPLAIN: "Required annotations are metadata keys that MUST be provided when someone registers a model run using this template"
+    - If yes: collect comma-separated keys (e.g., "experiment_id,run_config")
+    
+    ASK: "Do you want to specify optional annotations?" 
+    EXPLAIN: "Optional annotations are metadata keys that MAY be provided"
+    - If yes: collect comma-separated keys
+
+    === PHASE 6: COLLECT OPTIONAL METADATA ===
+    ASK: "Do you want to add any custom metadata to this workflow template?" - always ask
+    - If yes: collect as JSON object
+
+    === PHASE 7: VALIDATION & CONFIRMATION ===
+    Show complete summary:
+    - Display name
+    - Model ID (with name if available)
+    - Number of input templates (list IDs and optional status)
+    - Number of output templates (list IDs and optional status)
+    - Required annotations (if any)
+    - Optional annotations (if any)
+    - Custom metadata (if any)
+    
+    Ask for explicit confirmation: "Does this look correct? Type 'yes' to proceed with registration."
+
+    === PHASE 8: REGISTRATION ===
+    ONLY AFTER CONFIRMATION, call create_model_run_workflow_template with:
+    - display_name
+    - model_id
+    - input_template_ids (as JSON string)
+    - output_template_ids (as JSON string)
+    - required_annotations (comma-separated)
+    - optional_annotations (comma-separated)
+    - user_metadata (as JSON string)
+
+    === IMPORTANT NOTES ===
+    - Keep track of where you are in the workflow
+    - If creating dependencies (model/templates), complete those fully before returning to workflow template
+    - Never assume or skip steps
+    - Always show the full handle URL: https://hdl.handle.net/{id} for created entities
+    - Be patient and methodical - this is a complex multi-step process
+
+    CRITICAL: Never call create_model_run_workflow_template until ALL required info collected and confirmed.
     """
 @mcp.tool()
 async def login_to_provena(ctx: Context) -> Dict[str, Any]:
@@ -1023,7 +1169,174 @@ async def create_dataset_template(
         return {"status": "error", "message": str(e)}
 
 @mcp.tool()
-async def register_dataset(
+async def create_model_run_workflow_template(
+    ctx: Context,
+    display_name: str,
+    model_id: str,
+    input_template_ids: Optional[str] = None,
+    output_template_ids: Optional[str] = None,
+    required_annotations: Optional[str] = None,
+    optional_annotations: Optional[str] = None,
+    user_metadata: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Register a new Model Run Workflow Template in the Provena registry.
+    
+    Model run workflow templates define the inputs, outputs, and annotations required
+    for registering model runs. They act as blueprints for model run activities.
+    
+    IMPORTANT WORKFLOW - Follow this exact process:
+    1. Ask user for EACH field conversationally, one by one
+    2. Offer to search for existing entities OR create new ones as needed
+    3. Show complete summary of ALL collected information
+    4. Get explicit user confirmation before calling this tool
+    5. Only call this tool with ALL required information present
+
+    REQUIRED FIELDS:
+    - display_name: User-friendly name for this workflow template (e.g., "Simple Coral Model v1.5 Workflow")
+    - model_id: The ID of a registered Model entity that this workflow template is for
+      * Ask: "Do you want to search for an existing model or create a new one?"
+      * If search: Use search_registry with subtype_filter="MODEL"
+      * If create new: Use create_model tool first, then come back here
+
+    OPTIONAL FIELDS:
+    - input_template_ids: JSON string array of input dataset template IDs with optional flags
+      * Ask: "Do you want to specify input dataset templates?"
+      * Each template: {"template_id": "10378.1/1234", "optional": false}
+      * For each template, ask: "Search for existing or create new dataset template?"
+      * If search: Use search_registry with subtype_filter="DATASET_TEMPLATE"
+      * If create new: Use register_entity_workflow 
+      * Example: '[{"template_id": "10378.1/123", "optional": false}, {"template_id": "10378.1/456", "optional": true}]'
+    
+    - output_template_ids: JSON string array of output dataset template IDs with optional flags
+      * Ask: "Do you want to specify output dataset templates?"
+      * Same format and process as input_template_ids
+      * Example: '[{"template_id": "10378.1/789", "optional": false}]'
+    
+    - required_annotations: Comma-separated list of required annotation keys
+      * Ask: "Do you want to specify required annotations for model runs?"
+      * These are metadata keys that MUST be provided when registering a model run
+      * Example: "experiment_id,run_configuration"
+    
+    - optional_annotations: Comma-separated list of optional annotation keys - these are required
+      * Ask: "Do you want to specify optional annotations for model runs?"
+      * These are metadata keys that MAY be provided when registering a model run
+      * Example: "notes,researcher_name"
+    
+    - user_metadata: Additional key-value metadata as JSON string
+      * Example: '{"version": "1.0", "purpose": "production"}'
+
+    Returns:
+        Dictionary with registration status and workflow template ID
+    """
+    client = await require_authentication(ctx)
+    if not client:
+        return {"status": "error", "message": "Authentication required"}
+    
+    try:
+        from ProvenaInterfaces.RegistryModels import (
+            ModelRunWorkflowTemplateDomainInfo, 
+            TemplateResource, 
+            WorkflowTemplateAnnotations
+        )
+        import json
+        
+        await ctx.info(f"Registering model run workflow template '{display_name}'")
+        
+        # Parse input templates
+        parsed_input_templates = []
+        if input_template_ids:
+            try:
+                input_list = json.loads(input_template_ids)
+                for template in input_list:
+                    parsed_input_templates.append(TemplateResource(
+                        template_id=template['template_id'],
+                        optional=template.get('optional', False)
+                    ))
+            except (json.JSONDecodeError, KeyError, ValueError) as e:
+                return {"status": "error", "message": f"Invalid input_template_ids format: {str(e)}"}
+        
+        # Parse output templates
+        parsed_output_templates = []
+        if output_template_ids:
+            try:
+                output_list = json.loads(output_template_ids)
+                for template in output_list:
+                    parsed_output_templates.append(TemplateResource(
+                        template_id=template['template_id'],
+                        optional=template.get('optional', False)
+                    ))
+            except (json.JSONDecodeError, KeyError, ValueError) as e:
+                return {"status": "error", "message": f"Invalid output_template_ids format: {str(e)}"}
+        
+        # Parse annotations
+        annotations = None
+        if required_annotations or optional_annotations:
+            # Parse and filter out empty strings
+            required_list = [k.strip() for k in required_annotations.split(',') if k.strip()] if required_annotations else None
+            optional_list = [k.strip() for k in optional_annotations.split(',') if k.strip()] if optional_annotations else None
+            
+            # Only create annotations if we have actual values (not None)
+            if required_list or optional_list:
+                # Build kwargs to only include non-None fields
+                annotation_kwargs = {}
+                if required_list:
+                    annotation_kwargs['required'] = required_list
+                if optional_list:
+                    annotation_kwargs['optional'] = optional_list
+                
+                annotations = WorkflowTemplateAnnotations(**annotation_kwargs)
+        
+        # Parse user metadata
+        parsed_metadata = None
+        if user_metadata:
+            try:
+                parsed_metadata = json.loads(user_metadata)
+            except json.JSONDecodeError as e:
+                return {"status": "error", "message": f"Invalid JSON in user_metadata: {str(e)}"}
+        
+        # Create the workflow template domain info
+        # Note: Use empty lists instead of None for templates, as Pydantic expects lists
+        workflow_template_info = ModelRunWorkflowTemplateDomainInfo(
+            display_name=display_name,
+            software_id=model_id,
+            input_templates=parsed_input_templates,  # Will be [] if no templates, which is valid
+            output_templates=parsed_output_templates,  # Will be [] if no templates, which is valid
+            annotations=annotations,
+            user_metadata=parsed_metadata
+        )
+        
+        # Register the workflow template
+        result = await client.registry.model_run_workflow.create_item(create_item_request=workflow_template_info)
+        
+        if not result.status.success:
+            await ctx.error(f"Workflow template registration failed: {result.status.details}")
+            return {"status": "error", "message": result.status.details}
+        
+        template_id = result.created_item.id if result.created_item else None
+        
+        await ctx.info(f"Successfully registered model run workflow template with ID: {template_id}")
+        
+        return {
+            "status": "success",
+            "workflow_template_id": template_id,
+            "handle_url": f"https://hdl.handle.net/{template_id}" if template_id else None,
+            "message": f"Model run workflow template '{display_name}' registered successfully",
+            "summary": {
+                "display_name": display_name,
+                "model_id": model_id,
+                "input_templates_count": len(parsed_input_templates),
+                "output_templates_count": len(parsed_output_templates),
+                "has_annotations": annotations is not None
+            }
+        }
+        
+    except Exception as e:
+        await ctx.error(f"Failed to register model run workflow template: {str(e)}")
+        return {"status": "error", "message": str(e)}
+
+@mcp.tool()
+async def create_dataset(
     ctx: Context,
     name: str,
     description: str,
@@ -1298,7 +1611,7 @@ async def create_person(
     Register a new person in the Provena registry.
 
     CRITICAL: Never call this tool until ALL required info collected and confirmed. Do NOT skip any fields and DO NOT make assumptions. - If any required field is missing, ask the user for it. Do not guess or invent values.
-    DO NOT USE UNTIL THE USER HAS PROVIDED ALL REQUIRED INFORMATION AND CONFIRMED. Use the prompt other_registration_workflow to guide the user.
+    DO NOT USE UNTIL THE USER HAS PROVIDED ALL REQUIRED INFORMATION AND CONFIRMED. Use the prompt register_entity_workflow to guide the user.
 
     IMPORTANT WORKFLOW - Follow this exact process:
     1. Ask user for EACH AND EVERY field conversationally, one by one
