@@ -1232,17 +1232,15 @@ async def create_model_run_workflow_template(
                 return {"status": "error", "message": f"Invalid JSON in user_metadata: {str(e)}"}
         
         # Create the workflow template domain info
-        # Note: Use empty lists instead of None for templates, as Pydantic expects lists
         workflow_template_info = ModelRunWorkflowTemplateDomainInfo(
             display_name=display_name,
             software_id=model_id,
-            input_templates=parsed_input_templates,  # Will be [] if no templates, which is valid
-            output_templates=parsed_output_templates,  # Will be [] if no templates, which is valid
+            input_templates=parsed_input_templates,  
+            output_templates=parsed_output_templates, 
             annotations=annotations,
             user_metadata=parsed_metadata
         )
         
-        # Register the workflow template
         result = await client.registry.model_run_workflow.create_item(create_item_request=workflow_template_info)
         
         if not result.status.success:
