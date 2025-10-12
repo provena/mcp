@@ -204,112 +204,248 @@ def _dump(obj):
         return obj.model_dump(mode="json")
     return obj
 
-# @mcp.tool()
-# async def check_authentication_status(ctx: Context) -> Dict[str, Any]:
-#     """Check current authentication status with Provena."""
-#     is_authenticated = auth_manager._is_authenticated()
+@mcp.tool()
+async def check_authentication_status(ctx: Context) -> Dict[str, Any]:
+    """Check current authentication status with Provena."""
+    is_authenticated = auth_manager._is_authenticated()
     
-#     status = {
-#         "authenticated": is_authenticated,
-#         "message": "Authenticated and ready" if is_authenticated else "Not authenticated - use login_to_provena"
-#     }
+    status = {
+        "authenticated": is_authenticated,
+        "message": "Authenticated and ready" if is_authenticated else "Not authenticated - use login_to_provena"
+    }
     
-#     await ctx.info(status["message"])
-#     return status
+    await ctx.info(status["message"])
+    return status
 
-# @mcp.tool()
-# async def diagnose_auth(ctx: Context) -> Dict[str, Any]:
-#     """Return non-sensitive diagnostics about current auth tokens (helps debug 401s)."""
-#     tokens_present = bool(getattr(auth_manager._auth, "tokens", None)) if auth_manager._auth else False
-#     access = auth_manager._get_access_token()
-#     access_preview = None
-#     if access:
-#         access_preview = f"{access[:10]}..."
-#     header = payload = None
-#     try:
-#         if access and access.count(".") == 2:
-#             import json as _json
-#             import base64 as _b64
+@mcp.prompt("handle_linking")
+def handle_linking_prompt() -> str:
+    """
+    Always provide the full handle URL for any Provena record when the user asks for a link.
 
-#             def _b64url_decode(s: str) -> bytes:
-#                 pad = '=' * (-len(s) % 4)
-#                 return _b64.urlsafe_b64decode(s + pad)
-
-#             h, p, _sig = access.split(".")
-#             try:
-#                 header = _json.loads(_b64url_decode(h))
-#             except Exception:
-#                 header = {"_error": "failed to decode"}
-#             try:
-#                 payload = _json.loads(_b64url_decode(p))
-#             except Exception:
-#                 payload = {"_error": "failed to decode"}
-#     except Exception:
-#         pass
-#     roles_info = {}
-#     try:
-#         if isinstance(payload, dict):
-#             ra = payload.get("resource_access") or {}
-#             if isinstance(ra, dict):
-#                 for client_id, obj in ra.items():
-#                     if isinstance(obj, dict):
-#                         r = obj.get("roles")
-#                         if isinstance(r, list):
-#                             if client_id in {"registry-api", "data-store-api", "prov-api", "search", "handle", "job-api", CLIENT_ID}:
-#                                 roles_info[client_id] = r
-#     except Exception:
-#         pass
-
-#     details = {
-#         "authenticated": auth_manager._is_authenticated(),
-#         "tokens_present": tokens_present,
-#         "access_token_present": bool(access),
-#         "access_token_preview": access_preview,
-#         "jwt_like": (access.count(".") == 2) if access else False,
-#         "client_id": CLIENT_ID,
-#         "realm": REALM,
-#         "domain": DOMAIN,
-#         "claims": {
-#             "header_typ": (header or {}).get("typ") if isinstance(header, dict) else None,
-#             "header_alg": (header or {}).get("alg") if isinstance(header, dict) else None,
-#             "iss": (payload or {}).get("iss") if isinstance(payload, dict) else None,
-#             "aud": (payload or {}).get("aud") if isinstance(payload, dict) else None,
-#             "azp": (payload or {}).get("azp") if isinstance(payload, dict) else None,
-#             "exp": (payload or {}).get("exp") if isinstance(payload, dict) else None,
-#             "resource_access": roles_info or None,
-#         }
-#     }
-#     await ctx.info("Auth diagnostics generated.")
-#     return details
-
+    INSTRUCTIONS:
+    - If the user requests a link to a record (dataset, person, organisation, etc.), always respond with the full handle URL in the format: https://hdl.handle.net/<id>
+    - Replace <id> with the actual record ID.
+    - Do not provide just the ID or a partial link—always use the full URL.
+    - Example: If the record ID is "12345/abcde", respond with "https://hdl.handle.net/12345/abcde"
+    """
+    return (
+        "If the user asks for a link to a record, always reply with the full handle URL: "
+        "https://hdl.handle.net/<id> (replace <id> with the actual record ID)."
+    )
 @mcp.prompt("dataset_registration_workflow")
 def dataset_registration_workflow() -> str:
     """
-    Guided dataset registration workflow that ensures complete data collection.
-    
+    Guided DATASET (data store item) registration workflow that ensures complete data collection.
+
+    IMPORTANT: This is for registering DATASETS (actual data in the data store), NOT dataset templates - use the register_entity_workflow prompt.
+    For dataset templates, use the register_entity_workflow prompt.
+
     This prompt creates a systematic process that prevents premature registration
     and ensures all required information is collected and validated.
     """
     return """
-You are a Provena dataset registration specialist. Follow this EXACT workflow:
+    You are a Provena DATASET registration specialist. Follow this EXACT workflow:
 
-=== PHASE 1: INITIALIZATION ===
-1. Greet user and explain you'll help register a dataset
-2. Explain the process: collect required info → optional info → summary → confirmation → registration
+    IMPORTANT: This workflow is for registering DATASETS (actual data items), NOT dataset templates.
+    Dataset templates are registered using a different process.
 
-=== PHASE 2: COLLECT INFORMATION ===
-Look at the register_dataset tool documentation to see all fields.
-Ask for each field conversationally - ENSURE YOU ASK TO COLLECT INFORMATION FOR EVERY SINGLE FIELD. This includes all of the Important, access, approval, metadata, spatial data, temporal data, list, user metadata and peope data fields.
+    === PHASE 1: INITIALIZATION ===
+    1. Check if logged in, if not, stop and ask the user to log in first (do not just use the login tool, engage the user)
+    2. Greet user and explain you'll help register a DATASET (actual data, not a template)
+    3. Explain the process: collect required info → optional info → summary → confirmation → registration
 
-=== PHASE 3: VALIDATION & CONFIRMATION ===
-Show complete summary and get explicit confirmation
+    === PHASE 2: COLLECT INFORMATION ===
+    Look at the register_dataset tool documentation to see all fields.
+    Ask for each field conversationally - ENSURE YOU ASK TO COLLECT INFORMATION FOR EVERY SINGLE FIELD. This includes all of the Important, access, approval, metadata, spatial data, temporal data, list, user metadata and people data fields.
+    IMPORTANT: You do not need to ask for a specific format, just convert what the user provides into the expected format. Clarify with the user if needed.
 
-=== PHASE 4: REGISTRATION ===
-Call register_dataset with ALL collected information
+    === PHASE 3: VALIDATION & CONFIRMATION ===
+    Show complete summary and get explicit confirmation
 
-CRITICAL: Never call register_dataset until ALL required info collected and confirmed.
-"""
+    === PHASE 4: REGISTRATION ===
+    Call register_dataset with ALL collected information
 
+    CRITICAL: Never call register_dataset until ALL required info collected and confirmed.
+    """
+
+@mcp.prompt("register_entity_workflow")
+def register_entity_workflow() -> str:
+    """
+    Guided registration workflow that ensures complete data collection for other entities like organizations, persons, models.
+
+    This prompt creates a systematic process that prevents premature registration
+    and ensures all required information is collected and validated.
+    """
+    return """
+    You are a Provena registration specialist. Follow this EXACT workflow:
+
+    === PHASE 1: INITIALIZATION ===
+    1. Check if logged in, if not, prompt the user to login first (do not just use the login tool, engage the user, stop and ask them to log in)
+    2. Greet user and explain you'll help register an entity
+    3. Briefly explain the process: collect required info → optional info → summary → confirmation → registration
+
+    === PHASE 2: COLLECT INFORMATION ===
+    Look at the relevant tool documentation to see all fields.
+    Ask for each field conversationally - ENSURE YOU ASK TO COLLECT INFORMATION FOR EVERY SINGLE FIELD, INCLUDING THE OPTIONAL ONES.
+
+    ENTITY-SPECIFIC GUIDANCE:
+    - For Organizations: name, display_name, ror (optional), user_metadata (optional)
+    - For Persons: first_name, last_name, email, display_name (optional), orcid (optional), ethics_approved, user_metadata (optional)
+    - For Models: name, description, documentation_url, source_url, display_name (optional), user_metadata (optional)
+
+    === PHASE 3: VALIDATION & CONFIRMATION ===
+    Show complete summary and get explicit confirmation
+
+    === PHASE 4: REGISTRATION ===
+    Call the relevant tool with ALL collected information:
+    - create_organisation for organizations
+    - create_person for persons
+    - create_model for models
+
+    CRITICAL: Never call desired tool until ALL required info collected and confirmed.
+    """
+
+@mcp.prompt("dataset_template_workflow")
+def dataset_template_workflow() -> str:
+    """
+    Guided workflow for registering Dataset Templates with resource management.
+    
+    This prompt creates a systematic process for dataset template registration,
+    including the definition of defined and deferred resources.
+    """
+    return """
+    You are a Provena Dataset Template registration specialist. Follow this EXACT workflow:
+
+    === PHASE 1: INITIALIZATION ===
+    1. Check if logged in, if not, prompt the user to login first (do not just use the login tool, engage the user by stopping and asking they need to be logged in)
+    2. Greet user and explain you'll help register a Dataset Template
+    3. Explain what a dataset template is: "A dataset template defines the structure and expected files/resources for datasets used in model runs"
+    4. Explain the process: collect basic info → define resources → summary → confirmation → registration
+
+    === PHASE 2: COLLECT INFORMATION ===
+    Look at the relevant tool documentation to see all fields.
+    Ask for each field conversationally - ENSURE YOU ASK TO COLLECT INFORMATION FOR EVERY SINGLE FIELD, INCLUDING THE OPTIONAL ONES.
+
+    ENTITY-SPECIFIC GUIDANCE:
+    - For Dataset Templates: display_name, description (optional), defined_resources, deferred_resources, user_metadata (optional)
+    - For defined resources once they provide the first one, ask if they want to add another until they say no, then move on to deferred resources
+    - For deferred resources once they provide the first one, ask if they want to add another until they say no, then move on to user_metadata
+    MAKE SURE TO ASK FOR ALL FIELDS 
+
+    === PHASE 3: VALIDATION & CONFIRMATION ===
+    Show complete summary and get explicit confirmation
+
+    === PHASE 4: REGISTRATION ===
+    - create_dataset_template for dataset templates
+
+    === IMPORTANT NOTES ===
+    - Keep track of where you are in the workflow
+    - Never assume or skip steps
+    - Always show the full handle URL: https://hdl.handle.net/{id} for created templates
+    - Be patient and methodical when collecting resource definitions
+    - Validate that usage_type values are one of: GENERAL_DATA, CONFIG_FILE, FORCING_DATA, PARAMETER_FILE
+
+    CRITICAL: Never call create_dataset_template until ALL required info collected and confirmed.
+    """
+
+@mcp.prompt("workflow_template_registration")
+def workflow_template_registration() -> str:
+    """
+    Guided workflow for registering Model Run Workflow Templates with dependency management.
+    
+    This prompt creates a systematic process that handles the complexity of workflow templates,
+    including the potential need to create dependent entities (models and dataset templates).
+    """
+    return """
+    You are a Provena Model Run Workflow Template registration specialist. Follow this EXACT workflow:
+
+    === PHASE 1: INITIALIZATION ===
+    1. Check if logged in, if not, prompt the user to login first (do not just use the login tool, engage the user by stopping and asking they need to be logged in)
+    2. Greet user and explain you'll help register a Model Run Workflow Template
+    3. Explain what a workflow template is: "A workflow template defines the inputs, outputs, and structure for model run activities"
+    4. Explain the process: identify/create model → identify/create dataset templates → define annotations → summary → confirmation → registration
+
+    === PHASE 2: COLLECT MODEL INFORMATION ===
+    ASK: "Do you have an existing model registered, or do you need to create a new one?"
+    
+    IF SEARCH FOR EXISTING:
+    - Ask them for the model name or keywords to search for
+    - Use search_registry with subtype_filter="MODEL"
+    - Show results and ask user to select one
+    - Record the model_id
+    
+    IF CREATE NEW:
+    - Explain: "Let's create the model first, then we'll come back to the workflow template"
+    - Follow the model registration workflow (use register_entity_workflow prompt guidance)
+    - Use create_model tool
+    - Record the returned model_id
+    - Return to workflow template collection
+
+    === PHASE 3: COLLECT INPUT DATASET TEMPLATES ===
+    ASK: "Does your model require input datasets?" 
+    
+    IF YES, FOR EACH INPUT:
+    - ASK: "Do you have an existing dataset template, or create a new one?"
+    - IF SEARCH: Ask them for the dataset template name or keywords to search for. Use search_registry with subtype_filter="DATASET_TEMPLATE", record ID
+    - IF CREATE: Follow dataset_template_workflow
+    - ASK: "Is this input optional?" (true/false)
+    - Add to input_templates list: {"template_id": "ID", "optional": bool}
+    
+    Continue until user indicates no more inputs needed.
+
+    === PHASE 4: COLLECT OUTPUT DATASET TEMPLATES ===
+    ASK: "Does your model produce output datasets?"
+    
+    IF YES, FOR EACH OUTPUT:
+    - Same process as inputs
+    - Add to output_templates list
+    
+    Continue until user indicates no more outputs needed.
+
+    === PHASE 5: COLLECT ANNOTATIONS ===
+    ASK: "Do you want to specify required annotations for model runs?" 
+    EXPLAIN: "Required annotations are metadata keys that MUST be provided when someone registers a model run using this template"
+    - If yes: collect comma-separated keys (e.g., "experiment_id,run_config")
+    
+    ASK: "Do you want to specify optional annotations?" 
+    EXPLAIN: "Optional annotations are metadata keys that MAY be provided"
+    - If yes: collect comma-separated keys
+
+    === PHASE 6: COLLECT OPTIONAL METADATA ===
+    ASK: "Do you want to add any custom metadata to this workflow template?" - always ask
+    - If yes: collect as JSON object
+
+    === PHASE 7: VALIDATION & CONFIRMATION ===
+    Show complete summary:
+    - Display name
+    - Model ID (with name if available)
+    - Number of input templates (list IDs and optional status)
+    - Number of output templates (list IDs and optional status)
+    - Required annotations (if any)
+    - Optional annotations (if any)
+    - Custom metadata (if any)
+    
+    Ask for explicit confirmation: "Does this look correct? Type 'yes' to proceed with registration."
+
+    === PHASE 8: REGISTRATION ===
+    ONLY AFTER CONFIRMATION, call create_model_run_workflow_template with:
+    - display_name
+    - model_id
+    - input_template_ids (as JSON string)
+    - output_template_ids (as JSON string)
+    - required_annotations (comma-separated)
+    - optional_annotations (comma-separated)
+    - user_metadata (as JSON string)
+
+    === IMPORTANT NOTES ===
+    - Keep track of where you are in the workflow
+    - If creating dependencies (model/templates), complete those fully before returning to workflow template
+    - Never assume or skip steps
+    - Always show the full handle URL: https://hdl.handle.net/{id} for created entities
+    - Be patient and methodical - this is a complex multi-step process
+
+    CRITICAL: Never call create_model_run_workflow_template until ALL required info collected and confirmed.
+    """
 @mcp.tool()
 async def login_to_provena(ctx: Context) -> Dict[str, Any]:
     """
@@ -759,7 +895,382 @@ async def get_current_date(ctx: Context) -> str:
     return current_date
 
 @mcp.tool()
-async def register_dataset(
+async def create_model(
+    ctx: Context,
+    name: str,
+    description: str,
+    documentation_url: str,
+    source_url: str,
+    display_name: Optional[str] = None,
+    user_metadata: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Register a new Model in the Provena registry.
+    
+    IMPORTANT WORKFLOW - Follow this exact process:
+    1. Ask user for EACH field conversationally, one by one
+    2. Show complete summary of ALL collected information
+    3. Get explicit user confirmation before calling this tool
+    4. Only call this tool with ALL required information present
+
+    REQUIRED FIELDS:
+    - name: The name of the software model (e.g., "Marine and Land Model")
+    - description: A description of the model which assists other users in understanding its nature
+    - documentation_url: A fully qualified URL to the site which hosts documentation about the model
+    - source_url: A URL to the source code or repository for the model
+
+    OPTIONAL FIELDS:
+    - display_name: How the model's name should appear when viewed (defaults to name if not provided)
+    - user_metadata: Additional key-value metadata as JSON string (e.g., '{"version": "1.0", "author": "John"}')
+
+    Returns:
+        Dictionary with registration status and model ID
+    """
+    client = await require_authentication(ctx)
+    if not client:
+        return {"status": "error", "message": "Authentication required"}
+    
+    try:
+        from ProvenaInterfaces.RegistryModels import ModelDomainInfo
+        
+        await ctx.info(f"Registering model '{name}'")
+        
+        # Parse user_metadata if provided
+        parsed_metadata = None
+        if user_metadata:
+            try:
+                import json
+                parsed_metadata = json.loads(user_metadata)
+            except json.JSONDecodeError as e:
+                return {"status": "error", "message": f"Invalid JSON in user_metadata: {str(e)}"}
+        
+        # Create the model domain info
+        model_info = ModelDomainInfo(
+            display_name=display_name or name,
+            name=name,
+            description=description,
+            documentation_url=documentation_url,
+            source_url=source_url,
+            user_metadata=parsed_metadata
+        )
+        
+        # Register the model
+        result = await client.registry.model.create_item(create_item_request=model_info)
+        
+        if not result.status.success:
+            await ctx.error(f"Model registration failed: {result.status.details}")
+            return {"status": "error", "message": result.status.details}
+        
+        model_id = result.created_item.id if result.created_item else None
+        
+        await ctx.info(f"Successfully registered model with ID: {model_id}")
+        
+        return {
+            "status": "success",
+            "model_id": model_id,
+            "handle_url": f"https://hdl.handle.net/{model_id}" if model_id else None,
+            "message": f"Model '{name}' registered successfully"
+        }
+        
+    except Exception as e:
+        await ctx.error(f"Failed to register model: {str(e)}")
+        return {"status": "error", "message": str(e)}
+
+@mcp.tool()
+async def create_dataset_template(
+    ctx: Context,
+    display_name: str,
+    description: Optional[str] = None,
+    defined_resources: Optional[str] = None,
+    deferred_resources: Optional[str] = None,
+    user_metadata: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Register a new Dataset Template in the Provena registry.
+    
+    Dataset templates define the structure/schema for datasets used in model runs.
+    They specify what files/resources are expected in a dataset.
+    
+    IMPORTANT WORKFLOW - Follow this exact process:
+    1. Ask user for EACH field conversationally, one by one
+    2. Show complete summary of ALL collected information
+    3. Get explicit user confirmation before calling this tool
+    4. Only call this tool with ALL required information present
+
+    REQUIRED FIELDS:
+    - display_name: Name for this template
+
+    OPTIONAL FIELDS:
+    - description: Description of what this template is for
+    - defined_resources: JSON string array of defined resources. Each resource should have:
+        * path: File path within dataset
+        * description: What this resource is
+        * usage_type: One of: GENERAL_DATA, CONFIG_FILE, FORCING_DATA, PARAMETER_FILE
+        * optional: boolean (default false)
+        * is_folder: boolean (default false)
+        Example: '[{"path": "data/input.csv", "description": "Input data", "usage_type": "GENERAL_DATA", "optional": false}]'
+    
+    - deferred_resources: JSON string array of deferred resources (placeholders filled at runtime). Each should have:
+        * key: A unique identifier for this resource placeholder
+        * description: What this resource is
+        * usage_type: One of: GENERAL_DATA, CONFIG_FILE, FORCING_DATA, PARAMETER_FILE
+        * optional: boolean (default false)
+        * is_folder: boolean (default false)
+        Example: '[{"key": "model_output", "description": "Model output file", "usage_type": "GENERAL_DATA", "optional": false}]'
+    
+    - user_metadata: Additional key-value metadata as JSON string
+
+    Returns:
+        Dictionary with registration status and template ID
+    """
+    client = await require_authentication(ctx)
+    if not client:
+        return {"status": "error", "message": "Authentication required"}
+    
+    try:
+        from ProvenaInterfaces.RegistryModels import DatasetTemplateDomainInfo, DefinedResource, DeferredResource, ResourceUsageType
+        import json
+        
+        await ctx.info(f"Registering dataset template '{display_name}'")
+        
+        # Parse JSON inputs
+        parsed_defined = []
+        if defined_resources:
+            try:
+                defined_list = json.loads(defined_resources)
+                for res in defined_list:
+                    parsed_defined.append(DefinedResource(
+                        path=res['path'],
+                        description=res['description'],
+                        usage_type=ResourceUsageType(res.get('usage_type', 'GENERAL_DATA')),
+                        optional=res.get('optional', False),
+                        is_folder=res.get('is_folder', False),
+                        additional_metadata=res.get('additional_metadata')
+                    ))
+            except (json.JSONDecodeError, KeyError, ValueError) as e:
+                return {"status": "error", "message": f"Invalid defined_resources format: {str(e)}"}
+        
+        parsed_deferred = []
+        if deferred_resources:
+            try:
+                deferred_list = json.loads(deferred_resources)
+                for res in deferred_list:
+                    parsed_deferred.append(DeferredResource(
+                        key=res['key'],
+                        description=res['description'],
+                        usage_type=ResourceUsageType(res.get('usage_type', 'GENERAL_DATA')),
+                        optional=res.get('optional', False),
+                        is_folder=res.get('is_folder', False),
+                        additional_metadata=res.get('additional_metadata')
+                    ))
+            except (json.JSONDecodeError, KeyError, ValueError) as e:
+                return {"status": "error", "message": f"Invalid deferred_resources format: {str(e)}"}
+        
+        parsed_metadata = None
+        if user_metadata:
+            try:
+                parsed_metadata = json.loads(user_metadata)
+            except json.JSONDecodeError as e:
+                return {"status": "error", "message": f"Invalid JSON in user_metadata: {str(e)}"}
+        
+        # Create the template domain info
+        template_info = DatasetTemplateDomainInfo(
+            display_name=display_name,
+            description=description,
+            defined_resources=parsed_defined if parsed_defined else None,
+            deferred_resources=parsed_deferred if parsed_deferred else None,
+            user_metadata=parsed_metadata
+        )
+        
+        # Register the template
+        result = await client.registry.dataset_template.create_item(create_item_request=template_info)
+        
+        if not result.status.success:
+            await ctx.error(f"Dataset template registration failed: {result.status.details}")
+            return {"status": "error", "message": result.status.details}
+        
+        template_id = result.created_item.id if result.created_item else None
+        
+        await ctx.info(f"Successfully registered dataset template with ID: {template_id}")
+        
+        return {
+            "status": "success",
+            "template_id": template_id,
+            "handle_url": f"https://hdl.handle.net/{template_id}" if template_id else None,
+            "message": f"Dataset template '{display_name}' registered successfully"
+        }
+        
+    except Exception as e:
+        await ctx.error(f"Failed to register dataset template: {str(e)}")
+        return {"status": "error", "message": str(e)}
+
+@mcp.tool()
+async def create_model_run_workflow_template(
+    ctx: Context,
+    display_name: str,
+    model_id: str,
+    input_template_ids: Optional[str] = None,
+    output_template_ids: Optional[str] = None,
+    required_annotations: Optional[str] = None,
+    optional_annotations: Optional[str] = None,
+    user_metadata: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Register a new Model Run Workflow Template in the Provena registry.
+    
+    Model run workflow templates define the inputs, outputs, and annotations required
+    for registering model runs. They act as blueprints for model run activities.
+    
+    IMPORTANT WORKFLOW - Follow this exact process:
+    1. Ask user for EACH field conversationally, one by one
+    2. Offer to search for existing entities OR create new ones as needed
+    3. Show complete summary of ALL collected information
+    4. Get explicit user confirmation before calling this tool
+    5. Only call this tool with ALL required information present
+
+    REQUIRED FIELDS:
+    - display_name: User-friendly name for this workflow template (e.g., "Simple Coral Model v1.5 Workflow")
+    - model_id: The ID of a registered Model entity that this workflow template is for
+      * Ask: "Do you want to search for an existing model or create a new one?"
+      * If search: Use search_registry with subtype_filter="MODEL"
+      * If create new: Use create_model tool first, then come back here
+
+    OPTIONAL FIELDS:
+    - input_template_ids: JSON string array of input dataset template IDs with optional flags
+      * Ask: "Do you want to specify input dataset templates?"
+      * Each template: {"template_id": "10378.1/1234", "optional": false}
+      * For each template, ask: "Search for existing or create new dataset template?"
+      * If search: Use search_registry with subtype_filter="DATASET_TEMPLATE"
+      * If create new: Use register_entity_workflow 
+      * Example: '[{"template_id": "10378.1/123", "optional": false}, {"template_id": "10378.1/456", "optional": true}]'
+    
+    - output_template_ids: JSON string array of output dataset template IDs with optional flags
+      * Ask: "Do you want to specify output dataset templates?"
+      * Same format and process as input_template_ids
+      * Example: '[{"template_id": "10378.1/789", "optional": false}]'
+    
+    - required_annotations: Comma-separated list of required annotation keys
+      * Ask: "Do you want to specify required annotations for model runs?"
+      * These are metadata keys that MUST be provided when registering a model run
+      * Example: "experiment_id,run_configuration"
+    
+    - optional_annotations: Comma-separated list of optional annotation keys - these are required
+      * Ask: "Do you want to specify optional annotations for model runs?"
+      * These are metadata keys that MAY be provided when registering a model run
+      * Example: "notes,researcher_name"
+    
+    - user_metadata: Additional key-value metadata as JSON string
+      * Example: '{"version": "1.0", "purpose": "production"}'
+
+    Returns:
+        Dictionary with registration status and workflow template ID
+    """
+    client = await require_authentication(ctx)
+    if not client:
+        return {"status": "error", "message": "Authentication required"}
+    
+    try:
+        from ProvenaInterfaces.RegistryModels import (
+            ModelRunWorkflowTemplateDomainInfo, 
+            TemplateResource, 
+            WorkflowTemplateAnnotations
+        )
+        import json
+        
+        await ctx.info(f"Registering model run workflow template '{display_name}'")
+        
+        # Parse input templates
+        parsed_input_templates = []
+        if input_template_ids:
+            try:
+                input_list = json.loads(input_template_ids)
+                for template in input_list:
+                    parsed_input_templates.append(TemplateResource(
+                        template_id=template['template_id'],
+                        optional=template.get('optional', False)
+                    ))
+            except (json.JSONDecodeError, KeyError, ValueError) as e:
+                return {"status": "error", "message": f"Invalid input_template_ids format: {str(e)}"}
+        
+        # Parse output templates
+        parsed_output_templates = []
+        if output_template_ids:
+            try:
+                output_list = json.loads(output_template_ids)
+                for template in output_list:
+                    parsed_output_templates.append(TemplateResource(
+                        template_id=template['template_id'],
+                        optional=template.get('optional', False)
+                    ))
+            except (json.JSONDecodeError, KeyError, ValueError) as e:
+                return {"status": "error", "message": f"Invalid output_template_ids format: {str(e)}"}
+        
+        # Parse annotations
+        annotations = None
+        if required_annotations or optional_annotations:
+            # Parse and filter out empty strings
+            required_list = [k.strip() for k in required_annotations.split(',') if k.strip()] if required_annotations else None
+            optional_list = [k.strip() for k in optional_annotations.split(',') if k.strip()] if optional_annotations else None
+            
+            # Only create annotations if we have actual values (not None)
+            if required_list or optional_list:
+                # Build kwargs to only include non-None fields
+                annotation_kwargs = {}
+                if required_list:
+                    annotation_kwargs['required'] = required_list
+                if optional_list:
+                    annotation_kwargs['optional'] = optional_list
+                
+                annotations = WorkflowTemplateAnnotations(**annotation_kwargs)
+        
+        # Parse user metadata
+        parsed_metadata = None
+        if user_metadata:
+            try:
+                parsed_metadata = json.loads(user_metadata)
+            except json.JSONDecodeError as e:
+                return {"status": "error", "message": f"Invalid JSON in user_metadata: {str(e)}"}
+        
+        # Create the workflow template domain info
+        workflow_template_info = ModelRunWorkflowTemplateDomainInfo(
+            display_name=display_name,
+            software_id=model_id,
+            input_templates=parsed_input_templates,  
+            output_templates=parsed_output_templates, 
+            annotations=annotations,
+            user_metadata=parsed_metadata
+        )
+        
+        result = await client.registry.model_run_workflow.create_item(create_item_request=workflow_template_info)
+        
+        if not result.status.success:
+            await ctx.error(f"Workflow template registration failed: {result.status.details}")
+            return {"status": "error", "message": result.status.details}
+        
+        template_id = result.created_item.id if result.created_item else None
+        
+        await ctx.info(f"Successfully registered model run workflow template with ID: {template_id}")
+        
+        return {
+            "status": "success",
+            "workflow_template_id": template_id,
+            "handle_url": f"https://hdl.handle.net/{template_id}" if template_id else None,
+            "message": f"Model run workflow template '{display_name}' registered successfully",
+            "summary": {
+                "display_name": display_name,
+                "model_id": model_id,
+                "input_templates_count": len(parsed_input_templates),
+                "output_templates_count": len(parsed_output_templates),
+                "has_annotations": annotations is not None
+            }
+        }
+        
+    except Exception as e:
+        await ctx.error(f"Failed to register model run workflow template: {str(e)}")
+        return {"status": "error", "message": str(e)}
+
+@mcp.tool()
+async def create_dataset(
     ctx: Context,
     name: str,
     description: str,
@@ -815,16 +1326,16 @@ async def register_dataset(
     IMPORTANT FIELDS
     - name: Dataset name
     - description: Detailed description
-    - publisher_id: publisher ID (use search_registry)
-    - organisation_id: ORGANISATION ID (record creator)
-    - created_date: YYYY-MM-DD
-    - published_date: YYYY-MM-DD
+    - publisher_id: publisher ID (must be an organisation - can use search_registry to find if unsure)
+    - organisation_id: ORGANISATION ID (record creator - must be an organisation - can use search_registry to find if unsure)
+    - created_date: user can provide in any common format, convert to YYYY-MM-DD format
+    - published_date: user can provide in any common format, convert to YYYY-MM-DD format
     - license: License URI (e.g., https://creativecommons.org/licenses/by/4.0/)
 
-    ACCESS INFORMATION FIELDS (ensure you ask about these)
-    - access_reposited: Stored in Data Store? (default True)
-    - access_uri: URI if externally hosted (optional; recommended if not reposited)
-    - access_description: How to access externally hosted data (optional)
+    ACCESS INFORMATION FIELDS (ensure you ask about these - if reposited is False, you must ask for URI and description, otherwise skip them if reposited is True)
+    - access_reposited: Is the data reposited? 
+    - access_uri: URI if externally hosted (optional - skip if access_reposited is True)
+    - access_description: How to access externally hosted data (optional - skip if access_reposited is True)
 
     APPROVALS FIELDS (booleans for true or false)
     - ethics_registration_relevant, ethics_registration_obtained (if not relevant, obtained is false, and you do not need to ask)
@@ -833,10 +1344,10 @@ async def register_dataset(
     - export_controls_relevant, export_controls_obtained (if not relevant, obtained is false, and you do not need to ask)
  
     METADATA FIELDS (ensure you ask about these)
-    - purpose: Why the dataset was created
-    - rights_holder: Who owns/manages rights
-    - usage_limitations:  Access/use restrictions
-    - preferred_citation: How to cite this dataset
+    - purpose: Why the dataset was created (optional, so skip if user does not have one)
+    - rights_holder: Who owns/manages rights (optional, so skip if user does not have one)
+    - usage_limitations:  Access/use restrictions (optional, so skip if user does not have one)
+    - preferred_citation: How to cite this dataset (optional, so skip if user does not have one)
 
     SPATIAL DATA FIELDS (ensure you ask about these)
     - spatial_info: Ask if they want to provide spatial information, if not, skip all spatial fields
@@ -846,19 +1357,19 @@ async def register_dataset(
 
     TEMPORAL DATA FIELDS (ensure you ask about these)
     - temporal_info: Ask if they want to provide temporal information, if not, skip all temporal fields
-    - temporal_begin_date, temporal_end_date: collect both or neither (YYYY-MM-DD)
-    - temporal_resolution: ISO8601 duration (e.g., P1D)
+    - temporal_begin_date, temporal_end_date: Collect both or neither - cannot just have one (YYYY-MM-DD)
+    - temporal_resolution: ISO8601 duration (e.g., P1D) (if given in a different format, convert to ISO8601)
 
     LIST DATA FIELDS (ensure you ask about these)
-    - formats: Comma-separated (e.g., "CSV, JSON")
-    - keywords: Comma-separated tags
+    - formats: Comma-separated format (e.g., "CSV, JSON")(optional, so skip if user does not have one)
+    - keywords: Comma-separated format tags - just ask for keywords and convert to proper format (optional, so skip if user does not have one)
 
     user_metadata DATA FIELDS (ensure you ask about these)
-    - JSON object string; values will be stringified
+    - JSON object string; values will be stringified (optional, so skip if user does not have one)
 
     PEOPLE DATA FIELDS (ensure you ask about these)
-    - data_custodian_id: PERSON ID (use search_registry)
-    - point_of_contact: Free-text contact details (e.g., email)
+    - data_custodian_id: PERSON ID (use search_registry) (optional, so skip if user does not have one)
+    - point_of_contact: Free-text contact details (e.g., email) (optional, so skip if user does not have one)
 
     Returns:
         Dict with registration status and dataset_id (handle)
@@ -1019,8 +1530,162 @@ async def register_dataset(
     except Exception as e:
         await ctx.error(f"Registration failed: {str(e)}")
         return {"status": "error", "message": str(e)}
+@mcp.tool()
+async def create_person(
+    ctx: Context,
+    first_name: str,
+    last_name: str,
+    email: str,
+    display_name: Optional[str] = None, 
+    orcid: Optional[str] = None,
+    ethics_approved: bool = True,
+    user_metadata: Optional[Dict[str, str]] = None
+) -> Dict[str, Any]:
+    """
+    Register a new person in the Provena registry.
 
+    CRITICAL: Never call this tool until ALL required info collected and confirmed. Do NOT skip any fields and DO NOT make assumptions. - If any required field is missing, ask the user for it. Do not guess or invent values.
+    DO NOT USE UNTIL THE USER HAS PROVIDED ALL REQUIRED INFORMATION AND CONFIRMED. Use the prompt register_entity_workflow to guide the user.
 
+    IMPORTANT WORKFLOW - Follow this exact process:
+    1. Ask user for EACH AND EVERY field conversationally, one by one
+    2. Show complete summary of ALL collected information
+    3. Get explicit user confirmation before calling this tool
+
+    IMPORTANT FIELDS
+    - first_name: Given name(s)
+    - last_name: Family name(s)
+    - email: Contact email
+    - display_name: Display name (optional; defaults to "first_name+last_name")
+    - orcid: ORCID iD (optional; can be just the ID or full URL)
+    - ethics_approved: Ethics approved for registry (default True) (True/False)
+    - user_metadata: Dictionary of additional metadata (string values) - DO NOT STRINGIFY. (optional but still ask)
+        - example: 
+            user_metadata": {
+                "party": "hufflepuff"
+            }
+    """
+    client = await require_authentication(ctx)
+    if not client:
+        return {"status": "error", "message": "Authentication required"}
+    
+    try:
+        from pydantic import ValidationError
+        from ProvenaInterfaces.RegistryModels import PersonDomainInfo
+        
+        final_display_name = display_name or f"{first_name.strip()} {last_name.strip()}"
+        
+        orcid_url = None
+        if orcid:
+            orcid = orcid.strip()
+            if orcid and not orcid.startswith("http"):
+                orcid_url = f"https://orcid.org/{orcid}"
+            else:
+                orcid_url = orcid
+        
+        person_info = PersonDomainInfo(
+            display_name=final_display_name,
+            first_name=first_name.strip(),
+            last_name=last_name.strip(),
+            email=email.strip(),
+            orcid=orcid_url,
+            ethics_approved=ethics_approved,
+            user_metadata=user_metadata
+        )
+
+        result = await client.registry.person.create_item(
+            create_item_request=person_info
+        )
+        
+        if not getattr(result.status, "success", False):
+            return {
+                "status": "error",
+                "message": getattr(result.status, "details", "Unknown failure"),
+            }
+
+        created_id = result.created_item.id
+
+        await ctx.info(f"Person '{final_display_name}' registered with ID: {created_id}")
+        
+        return {
+            "status": "success",
+            "organisation_id": result.created_item.id,
+            "message": f"Organisation registered successfully",
+            "handle_url": f"https://hdl.handle.net/{result.created_item.id}" if result.created_item.id else None
+        }
+    
+    except ValidationError as ve:
+        await ctx.error(f"Validation failed: {ve}")
+        return {
+            "status": "error",
+            "message": "Validation failed",
+            "details": [{"field": err["loc"], "message": err["msg"]} for err in ve.errors()]
+        }
+    except Exception as e:
+        await ctx.error(f"Person creation failed: {str(e)}")
+        return {"status": "error", "message": str(e)}
+    
+@mcp.tool()
+async def create_organisation(
+    ctx: Context,
+    name: str,
+    display_name: Optional[str] = None, 
+    ror: Optional[str] = None,
+    user_metadata: Optional[Dict[str, str]] = None
+) -> Dict[str, Any]:
+    """
+    Register a new organisation in the Provena registry.
+
+    DO NOT USE UNTIL THE USER HAS PROVIDED ALL REQUIRED INFORMATION AND CONFIRMED.
+
+    IMPORTANT WORKFLOW - Follow this exact process:
+    1. Ask user for EACH AND EVERY field conversationally, one by one in the
+    2. Show complete summary of ALL collected information
+    3. Get explicit user confirmation before calling this tool
+
+    IMPORTANT FIELDS
+    - name: Organisation name
+    - display_name: Display name (optional; defaults to name)
+    - ror: ROR iD or URL (optional; can be just the ID or full URL)
+    - user_metadata: Optional dictionary of additional metadata (string values) 
+    """
+    client = await require_authentication(ctx)
+    if not client:
+        return {"status": "error", "message": "Authentication required"}
+
+    try:
+        from pydantic import ValidationError
+        from ProvenaInterfaces.RegistryModels import OrganisationDomainInfo
+
+        final_display_name = display_name.strip() if display_name else name.strip()
+
+        ror_url = ror.strip() if ror else None
+        if ror_url and not ror_url.startswith("http"):
+            ror_url = f"https://ror.org/{ror_url}"
+
+        org_info = OrganisationDomainInfo(
+            display_name=final_display_name,
+            name=name,
+            ror=ror_url,
+            user_metadata=user_metadata
+        )
+
+        result = await client.registry.organisation.create_item(
+            create_item_request=org_info
+        )
+
+        if not result.status.success:
+            return {"status": "error", "message": result.status.details}
+
+        return {
+            "status": "success",
+            "organisation_id": result.created_item.id,
+            "message": f"Organisation '{final_display_name}' registered successfully"
+        }
+    except ValidationError as ve:
+        return {"status": "error", "message": "Validation failed", "details": ve.errors()}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 if __name__ == "__main__":
     if "--http" in sys.argv:
