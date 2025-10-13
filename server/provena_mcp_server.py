@@ -266,6 +266,8 @@ def dataset_registration_workflow() -> str:
     Call register_dataset with ALL collected information
 
     CRITICAL: Never call register_dataset until ALL required info collected and confirmed.
+        - If searching, always show results with display names for clarity
+
     """
 
 @mcp.prompt("register_entity_workflow")
@@ -344,6 +346,7 @@ def dataset_template_workflow() -> str:
     - Always show the full handle URL: https://hdl.handle.net/{id} for created templates
     - Be patient and methodical when collecting resource definitions
     - Validate that usage_type values are one of: GENERAL_DATA, CONFIG_FILE, FORCING_DATA, PARAMETER_FILE
+    - If searching, always show results with display names for clarity
 
     CRITICAL: Never call create_dataset_template until ALL required info collected and confirmed.
     """
@@ -360,10 +363,9 @@ def workflow_template_registration() -> str:
     You are a Provena Model Run Workflow Template registration specialist. Follow this EXACT workflow:
 
     === PHASE 1: INITIALIZATION ===
-    1. Check if logged in, if not, prompt the user to login first (do not just use the login tool, engage the user by stopping and asking they need to be logged in)
-    2. Greet user and explain you'll help register a Model Run Workflow Template
-    3. Explain what a workflow template is: "A workflow template defines the inputs, outputs, and structure for model run activities"
-    4. Explain the process: identify/create model → identify/create dataset templates → define annotations → summary → confirmation → registration
+    1. Greet user and explain you'll help register a Model Run Workflow Template
+    2. Explain what a workflow template is: "A workflow template defines the inputs, outputs, and structure for model run activities"
+    3. Explain the process: identify/create model → identify/create dataset templates → define annotations → summary → confirmation → registration
 
     === PHASE 2: COLLECT MODEL INFORMATION ===
     ASK: "Do you have an existing model registered, or do you need to create a new one?"
@@ -382,11 +384,11 @@ def workflow_template_registration() -> str:
     - Return to workflow template collection
 
     === PHASE 3: COLLECT INPUT DATASET TEMPLATES ===
-    ASK: "Does your model require input datasets?" 
+    ASK: "Does your model require input dataset templates?" 
     
     IF YES, FOR EACH INPUT:
     - ASK: "Do you have an existing dataset template, or create a new one?"
-    - IF SEARCH: Ask them for the dataset template name or keywords to search for. Use search_registry with subtype_filter="DATASET_TEMPLATE", record ID
+    - IF SEARCH: Ask them for the dataset template name or keywords to search for. Use search_registry with subtype_filter="DATASET_TEMPLATE", record ID - show results and ask user to select one
     - IF CREATE: Follow dataset_template_workflow
     - ASK: "Is this input optional?" (true/false)
     - Add to input_templates list: {"template_id": "ID", "optional": bool}
@@ -394,7 +396,7 @@ def workflow_template_registration() -> str:
     Continue until user indicates no more inputs needed.
 
     === PHASE 4: COLLECT OUTPUT DATASET TEMPLATES ===
-    ASK: "Does your model produce output datasets?"
+    ASK: "Does your model produce output dataset templates?"
     
     IF YES, FOR EACH OUTPUT:
     - Same process as inputs
@@ -443,9 +445,196 @@ def workflow_template_registration() -> str:
     - Never assume or skip steps
     - Always show the full handle URL: https://hdl.handle.net/{id} for created entities
     - Be patient and methodical - this is a complex multi-step process
+    - If searching, always show results with display names for clarity
 
     CRITICAL: Never call create_model_run_workflow_template until ALL required info collected and confirmed.
     """
+
+@mcp.prompt("model_run_registration")
+def model_run_registration() -> str:
+    """
+    Guided workflow for registering Model Runs with validation and dependency checking.
+    
+    Model runs document actual executions of computational models, linking input datasets
+    to output datasets through a specific model version, creating the provenance graph.
+    """
+    return """
+    You are a Provena Model Run registration specialist. Follow this EXACT workflow:
+
+    CRITICAL RULE: Ask ONE question per message, DO NOT ASK FOR MULTIPLE FIELDS AT ONCE.
+    IMPORTANT: The user can give you information in any format, you need to convert it to the expected format. Clarify with the user if needed.
+
+    === PHASE 1: INITIALIZATION ===
+    1. Greet user and explain you'll help register a Model Run
+    2. Explain what a model run is: "A model run documents an actual execution of a computational model, linking input data to output data through a specific model version. This creates the provenance graph that enables traceability."
+    3. Explain the process: select workflow template → collect execution details → link datasets → add annotations → confirm → register
+
+    === PHASE 2: WORKFLOW TEMPLATE SELECTION ===
+    ASK: "Do you have a workflow template ID, or do you need to search for one?"
+    
+    IF SEARCH:
+    - Ask for keywords related to the model/workflow
+    - Use search_registry with subtype_filter="MODEL_RUN_WORKFLOW_TEMPLATE"
+    - Show results with display names and ask user to select one
+    - Record workflow_template_id
+    - Fetch the template to see its requirements (inputs/outputs/annotations)
+    
+    IF PROVIDE ID DIRECTLY:
+    - Record workflow_template_id
+    - Fetch the template to see its requirements
+    
+    IF CREATE NEW:
+    - Explain: "You need a workflow template first. Let's create one."
+    - Use workflow_template_registration prompt to guide template creation
+    - Come back here after template is created
+
+    === PHASE 3: COLLECT BASIC INFORMATION ===
+    Ask for each field ONE BY ONE:
+    
+    1. display_name: 
+       - ASK: "What would you like to name this model run?"
+       - EXPLAIN: This should uniquely identify this specific execution
+    
+    2. description:
+       - ASK: "Please provide a description of this model run"
+       - EXPLAIN: What was this run for? What question did it answer? What were the key parameters or conditions?
+    
+    3. model_version (optional):
+       - ASK: "Are you using a different model version than specified in the template?"
+       - IF YES: collect version string 
+       - IF NO: skip this field
+
+    === PHASE 4: COLLECT TEMPORAL INFORMATION ===
+    4. start_time:
+       - ASK: "When did the model execution start?"
+       - ACCEPT any common format (e.g., "2024-01-15 14:30:00", "Jan 15 2024 2:30pm")
+       - CONVERT to ISO 8601 format: YYYY-MM-DDTHH:MM:SSZ
+       - EXAMPLE: "2024-01-15T14:30:00Z"
+    
+    5. end_time:
+       - ASK: "When did the model execution finish?"
+       - ACCEPT any common format
+       - CONVERT to ISO 8601 format: YYYY-MM-DDTHH:MM:SSZ
+       - VALIDATE: Must be after start_time
+       - IF INVALID: explain the issue and ask again
+
+    === PHASE 5: COLLECT ASSOCIATIONS ===
+    6. associations_modeller_id (REQUIRED):
+       - ASK: "Who ran this model? Do you want to search for an existing person or provide an ID?"
+       - IF SEARCH: Use search_registry with subtype_filter="PERSON" - and show results for user to select
+       - IF NEW: Offer to use register_entity_workflow to create new person
+       - Record PERSON ID
+    
+    7. associations_requesting_organisation_id (REQUIRED):
+       - ASK: "Which organisation requested this model run? Do you want to search for an existing organisation or provide an ID?"
+       - IF SEARCH: Use search_registry with subtype_filter="ORGANISATION" - and show results for user to select
+       - IF NEW: Offer to use register_entity_workflow to create new organisation
+       - Record ORGANISATION ID
+
+    === PHASE 6: COLLECT INPUT DATASETS ===
+    8. input_datasets (optional but recommended):
+       - ASK: "Which datasets were used as inputs for this model run?"
+       - EXPLAIN: Reference the workflow template's input requirements if available
+       - FOR EACH INPUT:
+         * ASK: "Do you want to search for a dataset or provide an ID directly?"
+         * IF SEARCH: Use search_datasets or search_registry with subtype_filter="DATASET"
+         * Show results and let user select
+         * Add to input_datasets list
+       - ASK: "Do you want to add another input dataset?" (repeat until no)
+       - Show running list as collecting
+
+    === PHASE 7: COLLECT OUTPUT DATASETS ===
+    9. output_datasets (optional but recommended):
+       - ASK: "Which datasets were produced by this model run?"
+       - EXPLAIN: Reference the workflow template's output requirements if available
+       - FOR EACH OUTPUT:
+         * Same process as inputs
+         * Add to output_datasets list
+       - ASK: "Do you want to add another output dataset?" (repeat until no)
+       - Show running list as collecting
+
+    === PHASE 8: COLLECT ANNOTATIONS ===
+    10. annotations (check workflow template requirements):
+        - IF workflow template has required_annotations:
+          * EXPLAIN: "This workflow requires the following annotations: {list}"
+          * FOR EACH required annotation:
+            - ASK: "Please provide a value for '{annotation_key}'"
+            - Add to annotations object
+        
+        - IF workflow template has optional_annotations:
+          * ASK: "Do you want to provide any optional annotations? Options: {list}"
+          * IF YES: For each selected annotation, ask for value
+          * Add to annotations object
+        
+        - Format as JSON object: {"key1": "value1", "key2": "value2"}
+
+    === PHASE 9: COLLECT OPTIONAL METADATA ===
+    11. user_metadata (optional):
+        - ASK: "Do you want to add any custom metadata to this model run?"
+        - IF YES: Ask them to provide as key-value pairs, you'll format as JSON
+
+    === PHASE 10: VALIDATION & CONFIRMATION ===
+    Show complete summary in a clear, structured format:
+    
+    **Model Run Summary:**
+    - Display Name: {display_name}
+    - Description: {description}
+    - Workflow Template ID: {workflow_template_id}
+    - Model Version: {model_version or "using template default"}
+    - Execution Period: {start_time} to {end_time}
+    - Modeller: {modeller_id}
+    - Requesting Organisation: {organisation_id}
+    - Input Datasets ({count}): {list of IDs}
+    - Output Datasets ({count}): {list of IDs}
+    - Annotations: {annotations object or "none"}
+    - Custom Metadata: {user_metadata or "none"}
+    
+    ASK: "Does this look correct? Type 'yes' to register the model run."
+    
+    WAIT for explicit confirmation before proceeding.
+
+    === PHASE 11: REGISTRATION ===
+    ONLY AFTER USER CONFIRMS "yes", call create_model_run with ALL collected information:
+    - workflow_template_id
+    - display_name
+    - description
+    - start_time (ISO 8601 format)
+    - end_time (ISO 8601 format)
+    - associations_modeller_id
+    - associations_requesting_organisation_id
+    - model_version (if provided)
+    - input_datasets (as JSON array string if provided)
+    - output_datasets (as JSON array string if provided)
+    - annotations (as JSON object string if provided)
+    - user_metadata (as JSON object string if provided)
+
+    === PHASE 12: POST-REGISTRATION ===
+    After successful registration:
+    1. Display success message
+    2. Show the full handle URL: https://hdl.handle.net/{id}
+    3. Summarize what was created
+    4. Explain: "This model run is now part of the provenance graph, linking inputs to outputs through this execution."
+
+    === IMPORTANT NOTES ===
+    - Model runs are CRITICAL for traceability - they create the provenance graph
+    - All timestamps MUST be in ISO 8601 format with timezone (Z for UTC)
+    - All referenced entities (workflow template, person, org, datasets) MUST exist before registration
+    - If annotations are required by the workflow template, they MUST be provided
+    - Input/output datasets should match the workflow template's expectations (though not strictly enforced)
+    - Never hallucinate IDs or timestamps - always ask the user
+    - Be patient - this is a complex process with many dependencies
+    - If nested entity creation is needed (person, org, datasets), complete those fully before returning
+    - If searching, always show results with display names for clarity
+
+    === VALIDATION REMINDERS ===
+    - end_time must be after start_time
+    - All IDs must be valid handle format (check with user if unsure)
+    - Annotations must include all required keys from workflow template
+    - Dataset IDs should actually exist (offer to search if user is unsure)
+
+    CRITICAL: Never call create_model_run until ALL required information is collected and explicitly confirmed by the user.
+    """
+
 @mcp.tool()
 async def login_to_provena(ctx: Context) -> Dict[str, Any]:
     """
@@ -1120,44 +1309,19 @@ async def create_model_run_workflow_template(
     
     Model run workflow templates define the inputs, outputs, and annotations required
     for registering model runs. They act as blueprints for model run activities.
-    
-    IMPORTANT WORKFLOW - Follow this exact process:
-    1. Ask user for EACH field conversationally, one by one
-    2. Offer to search for existing entities OR create new ones as needed
-    3. Show complete summary of ALL collected information
-    4. Get explicit user confirmation before calling this tool
-    5. Only call this tool with ALL required information present
 
     REQUIRED FIELDS:
     - display_name: User-friendly name for this workflow template (e.g., "Simple Coral Model v1.5 Workflow")
     - model_id: The ID of a registered Model entity that this workflow template is for
-      * Ask: "Do you want to search for an existing model or create a new one?"
-      * If search: Use search_registry with subtype_filter="MODEL"
-      * If create new: Use create_model tool first, then come back here
 
     OPTIONAL FIELDS:
     - input_template_ids: JSON string array of input dataset template IDs with optional flags
-      * Ask: "Do you want to specify input dataset templates?"
-      * Each template: {"template_id": "10378.1/1234", "optional": false}
-      * For each template, ask: "Search for existing or create new dataset template?"
-      * If search: Use search_registry with subtype_filter="DATASET_TEMPLATE"
-      * If create new: Use register_entity_workflow 
-      * Example: '[{"template_id": "10378.1/123", "optional": false}, {"template_id": "10378.1/456", "optional": true}]'
     
     - output_template_ids: JSON string array of output dataset template IDs with optional flags
-      * Ask: "Do you want to specify output dataset templates?"
-      * Same format and process as input_template_ids
-      * Example: '[{"template_id": "10378.1/789", "optional": false}]'
     
     - required_annotations: Comma-separated list of required annotation keys
-      * Ask: "Do you want to specify required annotations for model runs?"
-      * These are metadata keys that MUST be provided when registering a model run
-      * Example: "experiment_id,run_configuration"
     
     - optional_annotations: Comma-separated list of optional annotation keys - these are required
-      * Ask: "Do you want to specify optional annotations for model runs?"
-      * These are metadata keys that MAY be provided when registering a model run
-      * Example: "notes,researcher_name"
     
     - user_metadata: Additional key-value metadata as JSON string
       * Example: '{"version": "1.0", "purpose": "production"}'
@@ -1686,6 +1850,293 @@ async def create_organisation(
         return {"status": "error", "message": "Validation failed", "details": ve.errors()}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+
+@mcp.tool()
+async def create_model_run(
+    ctx: Context,
+    workflow_template_id: str,
+    display_name: str,
+    description: str,
+    start_time: str, 
+    end_time: str,   
+    associations_modeller_id: str, 
+    associations_requesting_organisation_id: str, 
+    model_version: Optional[str] = None,
+    input_datasets: Optional[str] = None, 
+    output_datasets: Optional[str] = None,
+    annotations: Optional[str] = None,
+    user_metadata: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Register a model run activity that documents an actual execution of a model.
+    DO NOT USE UNTIL THE USER HAS PROVIDED ALL REQUIRED INFORMATION AND CONFIRMED. Use the prompt register_workflow to guide the user.
+
+    IMPORTANT WORKFLOW - Follow this exact process:
+    1. Ask user for EACH field conversationally, one by one - ENSURE YOU ASK TO COLLECT INFORMATION FOR EVERY SINGLE FIELD, INCLUDING THE OPTIONAL ONES
+    2. Validate workflow template exists and fetch its requirements
+    3. Collect annotations matching template's required/optional keys
+    4. Show complete summary of ALL collected information
+    5. Get explicit user confirmation before calling this tool
+    6. Only call this tool with ALL required information present
+    
+    This creates a provenance record linking:
+    - Input datasets → Model execution → Output datasets
+    - Following the structure defined by a workflow template
+    
+    REQUIRED FIELDS:
+    - workflow_template_id: The workflow template this run follows (search with subtype_filter="MODEL_RUN_WORKFLOW_TEMPLATE")
+    -- If asked to create, follow the create_model_run_workflow_template tool first and then provide the returned workflow_template_id here, and continue to the next step
+    - display_name: User-friendly name for this run (e.g., "Coral Model Run - Jan 2024")
+    - description: What this model run was for
+    - start_time: When execution started (ISO 8601: YYYY-MM-DDTHH:MM:SSZ)
+    - end_time: When execution completed (ISO 8601: YYYY-MM-DDTHH:MM:SSZ)
+    - associations_modeller_id: PERSON ID of who ran the model 
+    - associations_requesting_organisation_id: ORGANISATION ID 
+    
+    OPTIONAL FIELDS:
+    - model_version: Version string if different from template's model (e.g., "v1.5.2")
+    - input_datasets: JSON array of input dataset IDs used
+    -- If asked to create, follow the prompt register_dataset to create datasets first and then provide the returned dataset_ids here and continue to the next step
+    - output_datasets: JSON array of output dataset IDs produced
+    -- If asked to create, follow the prompt register_dataset to create datasets first and then provide the returned dataset_ids here and continue to the next step
+    - annotations: JSON object with metadata matching template requirements
+      - Example: '{"experiment_id": "EXP001", "run_config": "standard"}'
+      - MUST include all keys from workflow template's required_annotations
+      - MAY include keys from workflow template's optional_annotations
+    - user_metadata: Additional custom metadata as JSON string
+    
+    Returns:
+        Dictionary with registration status and model run ID
+    """
+    client = await require_authentication(ctx)
+    if not client:
+        return {"status": "error", "message": "Authentication required"}
+    
+    try:
+        from ProvenaInterfaces.ProvenanceModels import (
+            ModelRunRecord,
+            AssociationInfo,
+            TemplatedDataset,
+            DatasetType
+        )
+        import json
+        from datetime import datetime
+        
+        await ctx.info(f"Registering model run '{display_name}'")
+        
+        # Validate workflow template exists and get template info
+        try:
+            template_result = await client.registry.general_fetch_item(id=workflow_template_id)
+            if not template_result.status.success:
+                return {
+                    "status": "error", 
+                    "message": f"Workflow template {workflow_template_id} not found: {template_result.status.details}"
+                }
+            template = template_result.item
+            
+            # The template is returned as a dictionary, so access it accordingly
+            if isinstance(template, dict):
+                template_dict = template
+                await ctx.info(f"Workflow template keys: {list(template_dict.keys())}")
+            else:
+                # Fallback for object types
+                if hasattr(template, 'model_dump'):
+                    template_dict = template.model_dump()
+                elif hasattr(template, 'dict'):
+                    template_dict = template.dict()
+                else:
+                    template_dict = vars(template) if hasattr(template, '__dict__') else {}
+                await ctx.info(f"Workflow template fields: {list(template_dict.keys())}")
+            
+            # Extract input/output template info from workflow template
+            # Try multiple possible field names
+            input_templates = (
+                template_dict.get('input_templates') or 
+                template_dict.get('input_template_resources') or
+                template_dict.get('inputs') or
+                []
+            )
+            output_templates = (
+                template_dict.get('output_templates') or 
+                template_dict.get('output_template_resources') or
+                template_dict.get('outputs') or
+                []
+            )
+            
+            await ctx.info(f"Workflow template has {len(input_templates)} input templates and {len(output_templates)} output templates")
+            
+        except Exception as e:
+            return {"status": "error", "message": f"Failed to fetch workflow template: {str(e)}"}
+        
+        # Parse and convert timestamps to Unix epoch (integers)
+        try:
+            start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+            end_dt = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
+            if end_dt <= start_dt:
+                return {"status": "error", "message": "end_time must be after start_time"}
+            
+            # Convert to Unix timestamps (integers)
+            start_timestamp = int(start_dt.timestamp())
+            end_timestamp = int(end_dt.timestamp())
+            
+        except ValueError as e:
+            return {"status": "error", "message": f"Invalid timestamp format: {str(e)}. Use ISO 8601 (YYYY-MM-DDTHH:MM:SSZ)"}
+        
+        # Parse input datasets and create TemplatedDataset objects
+        parsed_inputs = []
+        if input_datasets:
+            try:
+                inputs_list = json.loads(input_datasets)
+                if not isinstance(inputs_list, list):
+                    return {"status": "error", "message": "input_datasets must be a JSON array"}
+                
+                # Create TemplatedDataset for each input
+                for idx, dataset_id in enumerate(inputs_list):
+                    # Use corresponding template if available
+                    if not input_templates or len(input_templates) == 0:
+                        # Try to provide helpful debug info
+                        debug_info = str(template_dict)[:500] if 'template_dict' in locals() else "unknown"
+                        return {
+                            "status": "error", 
+                            "message": f"No input template found for dataset {dataset_id}. Workflow template must define input templates. Template structure (first 500 chars): {debug_info}"
+                        }
+                    
+                    template_obj = input_templates[idx] if idx < len(input_templates) else input_templates[0]
+                    
+                    # Extract template_id - handle both dict and object types
+                    if isinstance(template_obj, dict):
+                        template_id = template_obj.get('template_id') or template_obj.get('id')
+                    else:
+                        template_id = getattr(template_obj, 'template_id', None) or getattr(template_obj, 'id', None)
+                    
+                    if not template_id:
+                        return {"status": "error", "message": f"Could not extract template_id from input template at index {idx}. Template object: {template_obj}"}
+                    
+                    templated_dataset = TemplatedDataset(
+                        dataset_template_id=template_id,
+                        dataset_id=str(dataset_id).strip(),
+                        dataset_type=DatasetType.DATA_STORE,
+                        resources=None
+                    )
+                    parsed_inputs.append(templated_dataset)
+                    
+            except json.JSONDecodeError as e:
+                return {"status": "error", "message": f"Invalid input_datasets JSON: {str(e)}"}
+        
+        # Parse output datasets and create TemplatedDataset objects
+        parsed_outputs = []
+        if output_datasets:
+            try:
+                outputs_list = json.loads(output_datasets)
+                if not isinstance(outputs_list, list):
+                    return {"status": "error", "message": "output_datasets must be a JSON array"}
+                
+                # Create TemplatedDataset for each output
+                for idx, dataset_id in enumerate(outputs_list):
+                    # Use corresponding template if available
+                    if not output_templates or len(output_templates) == 0:
+                        return {
+                            "status": "error", 
+                            "message": f"No output template found for dataset {dataset_id}. Workflow template must define output templates. Available template fields: {list(vars(template).keys()) if hasattr(template, '__dict__') else 'unknown'}"
+                        }
+                    
+                    template_obj = output_templates[idx] if idx < len(output_templates) else output_templates[0]
+                    
+                    # Extract template_id - handle both dict and object types
+                    if isinstance(template_obj, dict):
+                        template_id = template_obj.get('template_id') or template_obj.get('id')
+                    else:
+                        template_id = getattr(template_obj, 'template_id', None) or getattr(template_obj, 'id', None)
+                    
+                    if not template_id:
+                        return {"status": "error", "message": f"Could not extract template_id from output template at index {idx}. Template object: {template_obj}"}
+                    
+                    templated_dataset = TemplatedDataset(
+                        dataset_template_id=template_id,
+                        dataset_id=str(dataset_id).strip(),
+                        dataset_type=DatasetType.DATA_STORE,
+                        resources=None
+                    )
+                    parsed_outputs.append(templated_dataset)
+                    
+            except json.JSONDecodeError as e:
+                return {"status": "error", "message": f"Invalid output_datasets JSON: {str(e)}"}
+        
+        # Parse annotations
+        parsed_annotations = None
+        if annotations:
+            try:
+                parsed_annotations = json.loads(annotations)
+                if not isinstance(parsed_annotations, dict):
+                    return {"status": "error", "message": "annotations must be a JSON object"}
+            except json.JSONDecodeError as e:
+                return {"status": "error", "message": f"Invalid annotations JSON: {str(e)}"}
+        
+        # Parse user_metadata
+        parsed_user_metadata = None
+        if user_metadata:
+            try:
+                parsed_user_metadata = json.loads(user_metadata)
+                if not isinstance(parsed_user_metadata, dict):
+                    return {"status": "error", "message": "user_metadata must be a JSON object"}
+            except json.JSONDecodeError as e:
+                return {"status": "error", "message": f"Invalid user_metadata JSON: {str(e)}"}
+        
+        # Create association info
+        associations = AssociationInfo(
+            modeller_id=associations_modeller_id,
+            requesting_organisation_id=associations_requesting_organisation_id
+        )
+        
+        # Create model run record
+        model_run = ModelRunRecord(
+            workflow_template_id=workflow_template_id,
+            model_version=model_version,
+            inputs=parsed_inputs,
+            outputs=parsed_outputs,
+            annotations=parsed_annotations,
+            display_name=display_name,
+            description=description,
+            study_id=None,  # Can be added as optional parameter if needed
+            associations=associations,
+            start_time=start_timestamp,
+            end_time=end_timestamp,
+            user_metadata=parsed_user_metadata
+        )
+        
+        # Register the model run
+        result = await client.prov_api.create_model_run(model_run_payload=model_run)
+
+        if not result.status.success:
+            await ctx.error(f"Model run registration failed: {result.status.details}")
+            return {"status": "error", "message": result.status.details}
+        
+        run_id = result.session_id if hasattr(result, 'session_id') else None
+        
+        await ctx.info(f"Successfully registered model run with ID: {run_id}")
+        
+        return {
+            "status": "success",
+            "session_id": run_id,
+            "message": f"Model run '{display_name}' registration initiated successfully. Use the session_id to track progress.",
+            "note": "Model run registration is asynchronous. Check the job status using the session_id.",
+            "summary": {
+                "display_name": display_name,
+                "workflow_template_id": workflow_template_id,
+                "start_time": start_time,
+                "end_time": end_time,
+                "input_count": len(parsed_inputs),
+                "output_count": len(parsed_outputs),
+                "has_annotations": parsed_annotations is not None
+            }
+        }
+        
+    except Exception as e:
+        await ctx.error(f"Failed to register model run: {str(e)}")
+        return {"status": "error", "message": str(e)}
+
+
 
 if __name__ == "__main__":
     if "--http" in sys.argv:

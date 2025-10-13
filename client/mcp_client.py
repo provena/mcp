@@ -7,7 +7,7 @@ from fastmcp import Client
 
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-MODEL = "gpt-4o-mini"
+MODEL = "gpt-5-mini"
 
 def requires_confirmation(tool_name: str) -> bool:
     """Any tool beginning with 'create' requires confirmation."""
