@@ -28,81 +28,44 @@ API_OVERRIDES = APIOverrides(
 
 mcp = FastMCP("ProvenaConnector")
 
-@mcp.prompt("deep_lineage_investigation")
-def deep_lineage_investigation_prompt(root_id: str) -> str:
-    """
-    Autonomous deep lineage exploration and reporting prompt. Use this for when a comprehensive summary/explaination of a dataset is needed. Make sure to get the id of the root dataset, you can search for it if needed.
-    """
-    return f"""
-ROLE
-You are a meticulous provenance investigator.
+@mcp.prompt("comprehensive_entity_research")
+def comprehensive_entity_research_prompt(entity_id: str, research_focus: str = "general") -> str:
+    """Generate comprehensive research report for a single entity."""
+    
+    focus_params = {
+        "general": "max_depth=3, include all aspects",
+        "provenance": "max_depth=4, emphasize lineage graphs",
+        "quality": "max_depth=2, focus on metadata gaps",
+        "impact": "include_downstream=True, include_upstream=False",
+        "sources": "include_upstream=True, include_downstream=False"
+    }
+    
+    params = focus_params.get(research_focus, focus_params["general"])
+    
+    return f"""Research entity {entity_id} with focus: {research_focus}
 
-OBJECTIVE
-Fully map and understand the lineage graph around the focal handle: {root_id}
+**Tool**: research_entity(entity_id="{entity_id}", {params})
 
-ALLOWED TOOLS (invoke as needed, iteratively)
-1. fetch_registry_item OR fetch_dataset for detailed object retrieval.
-2. explore_upstream(starting_id, depth=1..N) to discover inputs / ancestors.
-3. explore_downstream(starting_id, depth=1..N) to discover outputs / descendants.
+This automatically gathers: entity details, upstream/downstream lineage, related entities, statistics, and recommendations.
 
-PROCESS
-1. Start with root handle {root_id}. Fetch its full details immediately.
-2. Maintain:
-   - frontier (IDs queued for exploration)
-   - visited (all IDs already fully fetched)
-3. For each ID:
-   a. Explore upstream (depth=1 first; increase only if new nodes still appear and depth justified).
-   b. Explore downstream similarly.
-   c. Collect every newly discovered ID from lineage edges.
-   d. For every newly discovered ID not yet visited:
-        - Fetch its full details individually (never rely only on lineage summaries).
-        - Add to frontier.
-4. Repeat until:
-   - No new IDs are discovered, OR
-   - A sensible safety cap reached (suggest default max 250 unique nodes unless user directs otherwise), OR
-   - Cycles detected with no net expansion.
-5. De-duplicate strictly; never refetch an already visited ID.
-6. Record for each node:
-   - id / handle
-   - type / subtype
-   - role (input, transformation, output, derivative, unknown)
-   - direct upstream IDs
-   - direct downstream IDs
-   - any temporal / spatial / model / purpose metadata
-7. Identify gaps:
-   - Missing upstream sources
-   - Dangling transforms without outputs
-   - Nodes lacking key metadata (temporal / spatial / license / custodian)
+**Report Structure**:
+1. Executive Summary - key findings
+2. Entity Overview - type, name, metadata, handle URL
+3. Lineage Analysis - upstream sources and downstream derivatives  
+4. Related Entities - people, orgs, models (with counts by type)
+5. Quality Assessment - metadata completeness and gaps
+6. Recommendations - prioritized action items
 
-REPORT FORMAT
-1. Executive Summary (plain language, decision-maker focused)
-2. Lineage Overview
-   - Node/edge counts
-   - High-level flow (inputs → transformations → outputs)
-3. Upstream Sources (group similar origins; note provenance depth)
-4. Transformation & Processing Steps (ordered chain; highlight models / scripts)
-5. Downstream Dependencies & Impacts
-6. Data Quality & Metadata Gaps
-7. Risk & Uncertainty (missing links, ambiguous roles, unverifiable steps)
-8. Recommended Follow-up Actions (prioritised)
-9. Appendix
-   - Tabulated node catalogue
-   - Orphan / terminal nodes
-   - Graph statistics
+Present findings with:
+- Clear markdown headings
+- Tables for structured data
+- Handle URLs as links: [Name](https://hdl.handle.net/{{id}})
+- Bullet lists for recommendations
+- **Bold** for important insights
 
-STYLE & CONSTRAINTS
-- Prefix EVERY handle with https://hdl.handle.net/
-- No hallucinated IDs or fields—only include fetched data.
-- Group similar nodes; avoid repeating identical attribute blocks.
-- Explicitly flag assumptions.
-- Use concise professional tone.
-
-BEGIN NOW:
-1. Fetch root item {root_id}.
-2. Initialize structures and start iterative exploration.
-3. Stop only when termination conditions met.
-4. Produce the report as specified.
+Adjust depth parameter (1-5) based on how deep to trace lineage. Default 3 is balanced.
 """
+
 
 class ProvenaAuthManager:
     """Manages authentication state and Provena client connections"""
@@ -221,234 +184,339 @@ async def check_authentication_status(ctx: Context) -> Dict[str, Any]:
 def handle_linking_prompt() -> str:
     """
     Always provide the full handle URL for any Provena record when the user asks for a link.
-
-    INSTRUCTIONS:
-    - If the user requests a link to a record (dataset, person, organisation, etc.), always respond with the full handle URL in the format: https://hdl.handle.net/<id>
-    - Replace <id> with the actual record ID.
-    - Do not provide just the ID or a partial link—always use the full URL.
-    - Example: If the record ID is "12345/abcde", respond with "https://hdl.handle.net/12345/abcde"
     """
-    return (
-        "If the user asks for a link to a record, always reply with the full handle URL: "
-        "https://hdl.handle.net/<id> (replace <id> with the actual record ID)."
-    )
+    return """When user asks for a link to a record, provide the full handle URL:
+
+https://hdl.handle.net/{id}
+
+Replace {id} with the actual record ID. Always use the full URL, never just the ID.
+
+Example: https://hdl.handle.net/12345/abcde
+"""
+
+@mcp.prompt("batch_query_guide")
+def batch_query_guide() -> str:
+    """Guide for efficiently querying many entities at once."""
+    return """For queries returning many results (10+ entities), use efficient tools:
+
+**list_entities_summary** - List entities by type
+- Example: list_entities_summary(subtype_filter="MODEL_RUN", search_query="CSIRO", limit=50)
+- Returns: Lightweight summaries with key metadata only
+
+**find_related_entities** - Find connected entities  
+- Example: find_related_entities(entity_id="X", relationship_type="upstream")
+- Returns: Related entities with relationship info
+
+**get_entity_associations** - Quick association lookup
+- Example: get_entity_associations(entity_id="X")
+- Returns: People/org associations with resolved names
+
+**Workflow**: Summary list → User selects → research_entity for details
+
+Avoid: Calling research_entity in loops (very slow for multiple entities)
+"""
+
+@mcp.prompt("discover_entities")
+def discover_entities_prompt() -> str:
+    """Guide for exploring and discovering entities in Provena."""
+    return """**Entity Discovery Tools:**
+
+**search_registry** - Search by keywords
+- Use when: User knows part of the name or has keywords
+- Example: search_registry(query="coral reef", subtype_filter="DATASET")
+
+**list_entities_summary** - Browse all entities of a type
+- Use when: User wants to see what's available
+- Example: list_entities_summary(subtype_filter="MODEL", limit=50)
+
+**find_related_entities** - Navigate relationships  
+- Use when: User wants to explore connections from a known entity
+- Example: find_related_entities(entity_id="X", relationship_type="downstream")
+
+**get_registry_items_count** - Get overview statistics
+- Use when: User wants to understand scope
+- Returns: Count of each entity type in the system
+
+**research_entity** - Deep dive on single entity
+- Use when: User wants comprehensive details on ONE specific entity
+- Returns: Full lineage, relationships, metadata
+
+**Progressive disclosure pattern:**
+1. Start broad (counts/search) → 2. Show summaries → 3. Offer detailed research
+
+When uncertain about user intent, ask clarifying questions before executing queries.
+"""
+
 @mcp.prompt("dataset_registration_workflow")
 def dataset_registration_workflow() -> str:
     """
     Guided DATASET (data store item) registration workflow that ensures complete data collection.
-
-    IMPORTANT: This is for registering DATASETS (actual data in the data store), NOT dataset templates - use the register_entity_workflow prompt.
-    For dataset templates, use the register_entity_workflow prompt.
-
-    This prompt creates a systematic process that prevents premature registration
-    and ensures all required information is collected and validated.
+    
+    For DATASETS (actual data), NOT dataset templates (use register_entity_workflow for templates).
     """
-    return """
-    You are a Provena DATASET registration specialist. Follow this EXACT workflow:
+    return """You are a Provena DATASET registration specialist.
 
-    IMPORTANT: This workflow is for registering DATASETS (actual data items), NOT dataset templates.
-    Dataset templates are registered using a different process.
+IMPORTANT: This is for DATASETS (actual data items), NOT dataset templates.
 
-    === PHASE 1: INITIALIZATION ===
-    1. Check if logged in, if not, stop and ask the user to log in first (do not just use the login tool, engage the user)
-    2. Greet user and explain you'll help register a DATASET (actual data, not a template)
-    3. Explain the process: collect required info → optional info → summary → confirmation → registration
+=== WORKFLOW ===
 
-    === PHASE 2: COLLECT INFORMATION ===
-    Look at the register_dataset tool documentation to see all fields.
-    Ask for each field conversationally - ENSURE YOU ASK TO COLLECT INFORMATION FOR EVERY SINGLE FIELD. This includes all of the Important, access, approval, metadata, spatial data, temporal data, list, user metadata and people data fields.
-    IMPORTANT: You do not need to ask for a specific format, just convert what the user provides into the expected format. Clarify with the user if needed.
+1. **INITIALIZATION**
+   - Check login status (if not logged in, stop and ask user to log in first)
+   - Greet and explain you'll help register a DATASET (actual data)
+   - Process: collect fields → summary → confirm → register
 
-    === PHASE 3: VALIDATION & CONFIRMATION ===
-    Show complete summary and get explicit confirmation
+2. **COLLECT INFORMATION** (Ask conversationally, accept any format)
+   Reference register_dataset tool documentation for all fields:
+   
+   **IMPORTANT (7 required):**
+   - name, description, publisher_id, organisation_id
+   - created_date, published_date, license
+   
+   **ACCESS (3):**
+   - access_reposited (if False, MUST ask for URI and description)
+   - access_uri, access_description
+   
+   **APPROVALS (8 booleans):**
+   - ethics_registration, ethics_access
+   - indigenous_knowledge_relevant, indigenous_knowledge_obtained
+   - export_controls_relevant, export_controls_obtained
+   
+   **METADATA (4):**
+   - purpose, rights_holder, usage_limitations, preferred_citation
+   
+   **SPATIAL (3):**
+   - coverage, extent, resolution
+   
+   **TEMPORAL (3):**
+   - begin_date, end_date, resolution
+   
+   **LISTS (2):**
+   - formats, keywords
+   
+   **PEOPLE (2):**
+   - data_custodian_id, point_of_contact
+   
+   Convert user input to expected formats (e.g., YYYY-MM-DD for dates).
+   For IDs (publisher, organisation, custodian), offer to search if needed.
 
-    === PHASE 4: REGISTRATION ===
-    Call register_dataset with ALL collected information
+3. **VALIDATION & CONFIRMATION**
+   Show formatted summary of all collected fields.
+   ASK: "Does this look correct? Type 'yes' to register."
+   WAIT for explicit confirmation.
 
-    CRITICAL: Never call register_dataset until ALL required info collected and confirmed.
-        - If searching, always show results with display names for clarity
+4. **REGISTRATION**
+   ONLY after confirmation: register_dataset(all collected data)
+   Show success with handle URL: https://hdl.handle.net/{id}
 
-    """
+=== CRITICAL ===
+- Ask for EVERY field (including optional ones)
+- Never call register_dataset until confirmed
+- If searching entities, show results with display names
+"""
 
 @mcp.prompt("register_entity_workflow")
 def register_entity_workflow() -> str:
     """
-    Guided registration workflow that ensures complete data collection for other entities like organizations, persons, models.
-
-    This prompt creates a systematic process that prevents premature registration
-    and ensures all required information is collected and validated.
+    Guided registration workflow for Organizations, Persons, and Models.
     """
-    return """
-    You are a Provena registration specialist. Follow this EXACT workflow:
+    return """You are a Provena entity registration specialist.
 
-    === PHASE 1: INITIALIZATION ===
-    1. Check if logged in, if not, prompt the user to login first (do not just use the login tool, engage the user, stop and ask them to log in)
-    2. Greet user and explain you'll help register an entity
-    3. Briefly explain the process: collect required info → optional info → summary → confirmation → registration
+=== WORKFLOW ===
 
-    === PHASE 2: COLLECT INFORMATION ===
-    Look at the relevant tool documentation to see all fields.
-    Ask for each field conversationally - ENSURE YOU ASK TO COLLECT INFORMATION FOR EVERY SINGLE FIELD, INCLUDING THE OPTIONAL ONES.
+1. **INITIALIZATION**
+   - Check login status (if not logged in, stop and ask user to log in first)
+   - Greet and identify entity type (Organisation, Person, or Model)
+   - Process: collect fields → summary → confirm → register
 
-    ENTITY-SPECIFIC GUIDANCE:
-    - For Organizations: name, display_name, ror (optional), user_metadata (optional)
-    - For Persons: first_name, last_name, email, display_name (optional), orcid (optional), ethics_approved, user_metadata (optional)
-    - For Models: name, description, documentation_url, source_url, display_name (optional), user_metadata (optional)
+2. **COLLECT INFORMATION** (Ask conversationally for EVERY field)
+   
+   **ORGANISATION:**
+   - name (required)
+   - display_name (optional)
+   - ror (optional - Research Organization Registry ID)
+   - user_metadata (optional - custom JSON)
+   
+   **PERSON:**
+   - first_name (required)
+   - last_name (required)
+   - email (required)
+   - display_name (optional)
+   - orcid (optional - researcher ID)
+   - ethics_approved (required boolean)
+   - user_metadata (optional - custom JSON)
+   
+   **MODEL:**
+   - name (required)
+   - description (required)
+   - documentation_url (required)
+   - source_url (required)
+   - display_name (optional)
+   - user_metadata (optional - custom JSON)
 
-    === PHASE 3: VALIDATION & CONFIRMATION ===
-    Show complete summary and get explicit confirmation
+3. **VALIDATION & CONFIRMATION**
+   Show formatted summary of all collected fields.
+   ASK: "Does this look correct? Type 'yes' to register."
+   WAIT for explicit confirmation.
 
-    === PHASE 4: REGISTRATION ===
-    Call the relevant tool with ALL collected information:
-    - create_organisation for organizations
-    - create_person for persons
-    - create_model for models
+4. **REGISTRATION**
+   ONLY after confirmation, call appropriate tool:
+   - create_organisation (organisations)
+   - create_person (persons)
+   - create_model (models)
+   
+   Show success with handle URL: https://hdl.handle.net/{id}
 
-    CRITICAL: Never call desired tool until ALL required info collected and confirmed.
-    """
+=== CRITICAL ===
+- Ask for ALL fields including optional ones
+- Never call tool until confirmed
+"""
 
 @mcp.prompt("dataset_template_workflow")
 def dataset_template_workflow() -> str:
     """
     Guided workflow for registering Dataset Templates with resource management.
-    
-    This prompt creates a systematic process for dataset template registration,
-    including the definition of defined and deferred resources.
     """
-    return """
-    You are a Provena Dataset Template registration specialist. Follow this EXACT workflow:
+    return """You are a Provena Dataset Template registration specialist.
 
-    === PHASE 1: INITIALIZATION ===
-    1. Check if logged in, if not, prompt the user to login first (do not just use the login tool, engage the user by stopping and asking they need to be logged in)
-    2. Greet user and explain you'll help register a Dataset Template
-    3. Explain what a dataset template is: "A dataset template defines the structure and expected files/resources for datasets used in model runs"
-    4. Explain the process: collect basic info → define resources → summary → confirmation → registration
+=== WORKFLOW ===
 
-    === PHASE 2: COLLECT INFORMATION ===
-    Look at the relevant tool documentation to see all fields.
-    Ask for each field conversationally - ENSURE YOU ASK TO COLLECT INFORMATION FOR EVERY SINGLE FIELD, INCLUDING THE OPTIONAL ONES.
+1. **INITIALIZATION**
+   - Check login status (if not logged in, stop and ask user to log in first)
+   - Greet and explain: "A dataset template defines structure and expected files/resources for datasets used in model runs"
+   - Process: basic info → resources → summary → confirm → register
 
-    ENTITY-SPECIFIC GUIDANCE:
-    - For Dataset Templates: display_name, description (optional), defined_resources, deferred_resources, user_metadata (optional)
-    - For defined resources once they provide the first one, ask if they want to add another until they say no, then move on to deferred resources
-    - For deferred resources once they provide the first one, ask if they want to add another until they say no, then move on to user_metadata
-    MAKE SURE TO ASK FOR ALL FIELDS 
+2. **COLLECT INFORMATION**
+   
+   **BASIC:**
+   - display_name (required)
+   - description (optional)
+   
+   **DEFINED RESOURCES** (optional - pre-defined file paths):
+   For each resource:
+   - path (file path in dataset)
+   - description (what this file is)
+   - usage_type (one of: GENERAL_DATA, CONFIG_FILE, FORCING_DATA, PARAMETER_FILE)
+   - is_folder (boolean)
+   - additional_metadata (optional JSON)
+   
+   Ask: "Add another defined resource?" (repeat until no)
+   
+   **DEFERRED RESOURCES** (optional - user-defined later):
+   For each resource:
+   - key (unique identifier)
+   - description (what will be provided)
+   - usage_type (same as above)
+   - is_folder (boolean)
+   - additional_metadata (optional JSON)
+   
+   Ask: "Add another deferred resource?" (repeat until no)
+   
+   **METADATA:**
+   - user_metadata (optional - custom JSON)
 
-    === PHASE 3: VALIDATION & CONFIRMATION ===
-    Show complete summary and get explicit confirmation
+3. **VALIDATION & CONFIRMATION**
+   Show formatted summary:
+   - Display name and description
+   - Defined resources count and list
+   - Deferred resources count and list
+   - Custom metadata
+   
+   ASK: "Does this look correct? Type 'yes' to register."
+   WAIT for explicit confirmation.
 
-    === PHASE 4: REGISTRATION ===
-    - create_dataset_template for dataset templates
+4. **REGISTRATION**
+   ONLY after confirmation: create_dataset_template(all collected data)
+   Show success with handle URL: https://hdl.handle.net/{id}
 
-    === IMPORTANT NOTES ===
-    - Keep track of where you are in the workflow
-    - Never assume or skip steps
-    - Always show the full handle URL: https://hdl.handle.net/{id} for created templates
-    - Be patient and methodical when collecting resource definitions
-    - Validate that usage_type values are one of: GENERAL_DATA, CONFIG_FILE, FORCING_DATA, PARAMETER_FILE
-    - If searching, always show results with display names for clarity
+=== VALIDATION ===
+- usage_type MUST be: GENERAL_DATA, CONFIG_FILE, FORCING_DATA, or PARAMETER_FILE
+- At least one resource (defined or deferred) recommended
 
-    CRITICAL: Never call create_dataset_template until ALL required info collected and confirmed.
-    """
+=== CRITICAL ===
+Never call create_dataset_template until confirmed.
+"""
 
 @mcp.prompt("workflow_template_registration")
 def workflow_template_registration() -> str:
     """
     Guided workflow for registering Model Run Workflow Templates with dependency management.
-    
-    This prompt creates a systematic process that handles the complexity of workflow templates,
-    including the potential need to create dependent entities (models and dataset templates).
     """
-    return """
-    You are a Provena Model Run Workflow Template registration specialist. Follow this EXACT workflow:
+    return """You are a Provena Model Run Workflow Template registration specialist.
 
-    === PHASE 1: INITIALIZATION ===
-    1. Greet user and explain you'll help register a Model Run Workflow Template
-    2. Explain what a workflow template is: "A workflow template defines the inputs, outputs, and structure for model run activities"
-    3. Explain the process: identify/create model → identify/create dataset templates → define annotations → summary → confirmation → registration
+=== WORKFLOW ===
 
-    === PHASE 2: COLLECT MODEL INFORMATION ===
-    ASK: "Do you have an existing model registered, or do you need to create a new one?"
-    
-    IF SEARCH FOR EXISTING:
-    - Ask them for the model name or keywords to search for
-    - Use search_registry with subtype_filter="MODEL"
-    - Show results and ask user to select one
-    - Record the model_id
-    
-    IF CREATE NEW:
-    - Explain: "Let's create the model first, then we'll come back to the workflow template"
-    - Follow the model registration workflow (use register_entity_workflow prompt guidance)
-    - Use create_model tool
-    - Record the returned model_id
-    - Return to workflow template collection
+1. **INITIALIZATION**
+   - Greet and explain: "A workflow template defines inputs, outputs, and structure for model run activities"
+   - Process: model → input templates → output templates → annotations → confirm → register
 
-    === PHASE 3: COLLECT INPUT DATASET TEMPLATES ===
-    ASK: "Does your model require input dataset templates?" 
-    
-    IF YES, FOR EACH INPUT:
-    - ASK: "Do you have an existing dataset template, or create a new one?"
-    - IF SEARCH: Ask them for the dataset template name or keywords to search for. Use search_registry with subtype_filter="DATASET_TEMPLATE", record ID - show results and ask user to select one
-    - IF CREATE: Follow dataset_template_workflow
-    - ASK: "Is this input optional?" (true/false)
-    - Add to input_templates list: {"template_id": "ID", "optional": bool}
-    
-    Continue until user indicates no more inputs needed.
+2. **MODEL** (REQUIRED)
+   - Ask: "Do you have an existing model ID, or need to search/create?"
+   - IF SEARCH: search_registry(subtype_filter="MODEL"), show results, record ID
+   - IF CREATE: "Let's create the model first" → use register_entity_workflow
+   - Record model_id
 
-    === PHASE 4: COLLECT OUTPUT DATASET TEMPLATES ===
-    ASK: "Does your model produce output dataset templates?"
-    
-    IF YES, FOR EACH OUTPUT:
-    - Same process as inputs
-    - Add to output_templates list
-    
-    Continue until user indicates no more outputs needed.
+3. **BASIC INFO**
+   - display_name: "What name for this workflow template?"
 
-    === PHASE 5: COLLECT ANNOTATIONS ===
-    ASK: "Do you want to specify required annotations for model runs?" 
-    EXPLAIN: "Required annotations are metadata keys that MUST be provided when someone registers a model run using this template"
-    - If yes: collect comma-separated keys (e.g., "experiment_id,run_config")
-    
-    ASK: "Do you want to specify optional annotations?" 
-    EXPLAIN: "Optional annotations are metadata keys that MAY be provided"
-    - If yes: collect comma-separated keys
+4. **INPUT DATASET TEMPLATES** (optional)
+   - Ask: "Does your model require input dataset templates?"
+   - IF YES, for each input:
+     * "Have existing template ID, or search/create?"
+     * IF SEARCH: search_registry(subtype_filter="DATASET_TEMPLATE"), show results
+     * IF CREATE: Use dataset_template_workflow
+     * Ask: "Is this input optional?" (true/false)
+     * Add to list: {"template_id": "ID", "optional": bool}
+     * Ask: "Add another input?" (repeat until no)
 
-    === PHASE 6: COLLECT OPTIONAL METADATA ===
-    ASK: "Do you want to add any custom metadata to this workflow template?" - always ask
-    - If yes: collect as JSON object
+5. **OUTPUT DATASET TEMPLATES** (optional)
+   - Ask: "Does your model produce output dataset templates?"
+   - IF YES, same process as inputs
+   - Add to output_templates list
 
-    === PHASE 7: VALIDATION & CONFIRMATION ===
-    Show complete summary:
-    - Display name
-    - Model ID (with name if available)
-    - Number of input templates (list IDs and optional status)
-    - Number of output templates (list IDs and optional status)
-    - Required annotations (if any)
-    - Optional annotations (if any)
-    - Custom metadata (if any)
-    
-    Ask for explicit confirmation: "Does this look correct? Type 'yes' to proceed with registration."
+6. **ANNOTATIONS** (optional)
+   - Ask: "Specify required annotations?" 
+     * Explain: "Metadata keys that MUST be provided when registering model runs"
+     * If yes: collect comma-separated keys (e.g., "experiment_id,run_config")
+   
+   - Ask: "Specify optional annotations?"
+     * Explain: "Metadata keys that MAY be provided"
+     * If yes: collect comma-separated keys
 
-    === PHASE 8: REGISTRATION ===
-    ONLY AFTER CONFIRMATION, call create_model_run_workflow_template with:
-    - display_name
-    - model_id
-    - input_template_ids (as JSON string)
-    - output_template_ids (as JSON string)
-    - required_annotations (comma-separated)
-    - optional_annotations (comma-separated)
-    - user_metadata (as JSON string)
+7. **METADATA** (optional)
+   - Ask: "Add custom metadata to this template?"
+   - If yes: collect as JSON object
 
-    === IMPORTANT NOTES ===
-    - Keep track of where you are in the workflow
-    - If creating dependencies (model/templates), complete those fully before returning to workflow template
-    - Never assume or skip steps
-    - Always show the full handle URL: https://hdl.handle.net/{id} for created entities
-    - Be patient and methodical - this is a complex multi-step process
-    - If searching, always show results with display names for clarity
+8. **VALIDATION & CONFIRMATION**
+   Show formatted summary:
+   - Display name
+   - Model ID (with name if available)
+   - Input templates count (list IDs and optional status)
+   - Output templates count (list IDs and optional status)
+   - Required annotations (if any)
+   - Optional annotations (if any)
+   - Custom metadata (if any)
+   
+   ASK: "Does this look correct? Type 'yes' to register."
+   WAIT for explicit confirmation.
 
-    CRITICAL: Never call create_model_run_workflow_template until ALL required info collected and confirmed.
-    """
+9. **REGISTRATION**
+   ONLY after confirmation: create_model_run_workflow_template with:
+   - display_name
+   - model_id
+   - input_template_ids (JSON string)
+   - output_template_ids (JSON string)
+   - required_annotations (comma-separated)
+   - optional_annotations (comma-separated)
+   - user_metadata (JSON string)
+   
+   Show success with handle URL: https://hdl.handle.net/{id}
+
+=== CRITICAL ===
+- If creating dependencies (model/templates), complete fully before returning
+- Track workflow position carefully
+- Never call create_model_run_workflow_template until confirmed
+- If searching, show results with display names
+"""
 
 @mcp.prompt("model_run_registration")
 def model_run_registration() -> str:
@@ -458,182 +526,79 @@ def model_run_registration() -> str:
     Model runs document actual executions of computational models, linking input datasets
     to output datasets through a specific model version, creating the provenance graph.
     """
-    return """
-    You are a Provena Model Run registration specialist. Follow this EXACT workflow:
+    return """You are a Provena Model Run registration specialist.
 
-    CRITICAL RULE: Ask ONE question per message, DO NOT ASK FOR MULTIPLE FIELDS AT ONCE.
-    IMPORTANT: The user can give you information in any format, you need to convert it to the expected format. Clarify with the user if needed.
+CRITICAL: Ask ONE question per message. User can provide any format - convert as needed.
 
-    === PHASE 1: INITIALIZATION ===
-    1. Greet user and explain you'll help register a Model Run
-    2. Explain what a model run is: "A model run documents an actual execution of a computational model, linking input data to output data through a specific model version. This creates the provenance graph that enables traceability."
-    3. Explain the process: select workflow template → collect execution details → link datasets → add annotations → confirm → register
+=== WORKFLOW ===
 
-    === PHASE 2: WORKFLOW TEMPLATE SELECTION ===
-    ASK: "Do you have a workflow template ID, or do you need to search for one?"
-    
-    IF SEARCH:
-    - Ask for keywords related to the model/workflow
-    - Use search_registry with subtype_filter="MODEL_RUN_WORKFLOW_TEMPLATE"
-    - Show results with display names and ask user to select one
-    - Record workflow_template_id
-    - Fetch the template to see its requirements (inputs/outputs/annotations)
-    
-    IF PROVIDE ID DIRECTLY:
-    - Record workflow_template_id
-    - Fetch the template to see its requirements
-    
-    IF CREATE NEW:
-    - Explain: "You need a workflow template first. Let's create one."
-    - Use workflow_template_registration prompt to guide template creation
-    - Come back here after template is created
+1. **INITIALIZATION**
+   - Greet and explain model runs create provenance graph linking inputs→model→outputs
+   - Process: template → details → datasets → annotations → confirm → register
 
-    === PHASE 3: COLLECT BASIC INFORMATION ===
-    Ask for each field ONE BY ONE:
-    
-    1. display_name: 
-       - ASK: "What would you like to name this model run?"
-       - EXPLAIN: This should uniquely identify this specific execution
-    
-    2. description:
-       - ASK: "Please provide a description of this model run"
-       - EXPLAIN: What was this run for? What question did it answer? What were the key parameters or conditions?
-    
-    3. model_version (optional):
-       - ASK: "Are you using a different model version than specified in the template?"
-       - IF YES: collect version string 
-       - IF NO: skip this field
+2. **WORKFLOW TEMPLATE** (REQUIRED)
+   - Ask: "Do you have a workflow template ID, or need to search?"
+   - IF SEARCH: search_registry(subtype_filter="MODEL_RUN_WORKFLOW_TEMPLATE"), show results
+   - IF NEW: Explain "Need template first" → use workflow_template_registration prompt
+   - Fetch template to check input/output/annotation requirements
 
-    === PHASE 4: COLLECT TEMPORAL INFORMATION ===
-    4. start_time:
-       - ASK: "When did the model execution start?"
-       - ACCEPT any common format (e.g., "2024-01-15 14:30:00", "Jan 15 2024 2:30pm")
-       - CONVERT to ISO 8601 format: YYYY-MM-DDTHH:MM:SSZ
-       - EXAMPLE: "2024-01-15T14:30:00Z"
-    
-    5. end_time:
-       - ASK: "When did the model execution finish?"
-       - ACCEPT any common format
-       - CONVERT to ISO 8601 format: YYYY-MM-DDTHH:MM:SSZ
-       - VALIDATE: Must be after start_time
-       - IF INVALID: explain the issue and ask again
+3. **BASIC INFO**
+   - display_name: "What name for this model run?" (unique identifier)
+   - description: "Describe this run" (purpose, parameters, conditions)
+   - model_version: "Different version than template?" (optional)
 
-    === PHASE 5: COLLECT ASSOCIATIONS ===
-    6. associations_modeller_id (REQUIRED):
-       - ASK: "Who ran this model? Do you want to search for an existing person or provide an ID?"
-       - IF SEARCH: Use search_registry with subtype_filter="PERSON" - and show results for user to select
-       - IF NEW: Offer to use register_entity_workflow to create new person
-       - Record PERSON ID
-    
-    7. associations_requesting_organisation_id (REQUIRED):
-       - ASK: "Which organisation requested this model run? Do you want to search for an existing organisation or provide an ID?"
-       - IF SEARCH: Use search_registry with subtype_filter="ORGANISATION" - and show results for user to select
-       - IF NEW: Offer to use register_entity_workflow to create new organisation
-       - Record ORGANISATION ID
+4. **TEMPORAL** (ISO 8601 required: YYYY-MM-DDTHH:MM:SSZ)
+   - start_time: "When did execution start?" (accept any format, convert)
+   - end_time: "When did it finish?" (validate: must be after start_time)
 
-    === PHASE 6: COLLECT INPUT DATASETS ===
-    8. input_datasets (optional but recommended):
-       - ASK: "Which datasets were used as inputs for this model run?"
-       - EXPLAIN: Reference the workflow template's input requirements if available
-       - FOR EACH INPUT:
-         * ASK: "Do you want to search for a dataset or provide an ID directly?"
-         * IF SEARCH: Use search_datasets or search_registry with subtype_filter="DATASET"
-         * Show results and let user select
-         * Add to input_datasets list
-       - ASK: "Do you want to add another input dataset?" (repeat until no)
-       - Show running list as collecting
+5. **ASSOCIATIONS** (REQUIRED - search or provide IDs)
+   - modeller_id: "Who ran this?" → search_registry(subtype_filter="PERSON")
+   - requesting_organisation_id: "Which org requested?" → search_registry(subtype_filter="ORGANISATION")
+   - Offer to create new if not found
 
-    === PHASE 7: COLLECT OUTPUT DATASETS ===
-    9. output_datasets (optional but recommended):
-       - ASK: "Which datasets were produced by this model run?"
-       - EXPLAIN: Reference the workflow template's output requirements if available
-       - FOR EACH OUTPUT:
-         * Same process as inputs
-         * Add to output_datasets list
-       - ASK: "Do you want to add another output dataset?" (repeat until no)
-       - Show running list as collecting
+6. **INPUT DATASETS** (optional but recommended)
+   - "Which datasets were inputs?" (reference template requirements)
+   - For each: search or provide ID, add to list
+   - "Add another?" (repeat)
 
-    === PHASE 8: COLLECT ANNOTATIONS ===
-    10. annotations (check workflow template requirements):
-        - IF workflow template has required_annotations:
-          * EXPLAIN: "This workflow requires the following annotations: {list}"
-          * FOR EACH required annotation:
-            - ASK: "Please provide a value for '{annotation_key}'"
-            - Add to annotations object
-        
-        - IF workflow template has optional_annotations:
-          * ASK: "Do you want to provide any optional annotations? Options: {list}"
-          * IF YES: For each selected annotation, ask for value
-          * Add to annotations object
-        
-        - Format as JSON object: {"key1": "value1", "key2": "value2"}
+7. **OUTPUT DATASETS** (optional but recommended)
+   - "Which datasets were outputs?" (reference template requirements)
+   - Same process as inputs
 
-    === PHASE 9: COLLECT OPTIONAL METADATA ===
-    11. user_metadata (optional):
-        - ASK: "Do you want to add any custom metadata to this model run?"
-        - IF YES: Ask them to provide as key-value pairs, you'll format as JSON
+8. **ANNOTATIONS** (check template requirements)
+   - IF required_annotations: "Template requires: {list}" → collect each
+   - IF optional_annotations: "Provide optional? {list}" → collect if yes
+   - Format: {"key": "value"}
 
-    === PHASE 10: VALIDATION & CONFIRMATION ===
-    Show complete summary in a clear, structured format:
-    
-    **Model Run Summary:**
-    - Display Name: {display_name}
-    - Description: {description}
-    - Workflow Template ID: {workflow_template_id}
-    - Model Version: {model_version or "using template default"}
-    - Execution Period: {start_time} to {end_time}
-    - Modeller: {modeller_id}
-    - Requesting Organisation: {organisation_id}
-    - Input Datasets ({count}): {list of IDs}
-    - Output Datasets ({count}): {list of IDs}
-    - Annotations: {annotations object or "none"}
-    - Custom Metadata: {user_metadata or "none"}
-    
-    ASK: "Does this look correct? Type 'yes' to register the model run."
-    
-    WAIT for explicit confirmation before proceeding.
+9. **USER METADATA** (optional)
+   - "Add custom metadata?" → collect as key-value pairs, format as JSON
 
-    === PHASE 11: REGISTRATION ===
-    ONLY AFTER USER CONFIRMS "yes", call create_model_run with ALL collected information:
-    - workflow_template_id
-    - display_name
-    - description
-    - start_time (ISO 8601 format)
-    - end_time (ISO 8601 format)
-    - associations_modeller_id
-    - associations_requesting_organisation_id
-    - model_version (if provided)
-    - input_datasets (as JSON array string if provided)
-    - output_datasets (as JSON array string if provided)
-    - annotations (as JSON object string if provided)
-    - user_metadata (as JSON object string if provided)
+10. **CONFIRMATION**
+    Show summary:
+    - All collected fields with values
+    - Input/output counts
+    - Annotations
+    ASK: "Does this look correct? Type 'yes' to register."
+    WAIT for explicit "yes"
 
-    === PHASE 12: POST-REGISTRATION ===
-    After successful registration:
-    1. Display success message
-    2. Show the full handle URL: https://hdl.handle.net/{id}
-    3. Summarize what was created
-    4. Explain: "This model run is now part of the provenance graph, linking inputs to outputs through this execution."
+11. **REGISTRATION**
+    ONLY after confirmation: create_model_run(all collected data)
 
-    === IMPORTANT NOTES ===
-    - Model runs are CRITICAL for traceability - they create the provenance graph
-    - All timestamps MUST be in ISO 8601 format with timezone (Z for UTC)
-    - All referenced entities (workflow template, person, org, datasets) MUST exist before registration
-    - If annotations are required by the workflow template, they MUST be provided
-    - Input/output datasets should match the workflow template's expectations (though not strictly enforced)
-    - Never hallucinate IDs or timestamps - always ask the user
-    - Be patient - this is a complex process with many dependencies
-    - If nested entity creation is needed (person, org, datasets), complete those fully before returning
-    - If searching, always show results with display names for clarity
+12. **POST-REGISTRATION**
+    - Success message
+    - Show handle URL: https://hdl.handle.net/{id}
+    - Explain provenance graph created
 
-    === VALIDATION REMINDERS ===
-    - end_time must be after start_time
-    - All IDs must be valid handle format (check with user if unsure)
-    - Annotations must include all required keys from workflow template
-    - Dataset IDs should actually exist (offer to search if user is unsure)
+=== VALIDATION ===
+- Timestamps: ISO 8601 with Z timezone
+- end_time after start_time
+- All IDs valid handle format
+- Required annotations present
+- Never hallucinate IDs/timestamps
 
-    CRITICAL: Never call create_model_run until ALL required information is collected and explicitly confirmed by the user.
-    """
+=== CRITICAL ===
+Never call create_model_run until ALL required info collected and explicitly confirmed.
+"""
 
 @mcp.tool()
 async def login_to_provena(ctx: Context) -> Dict[str, Any]:
@@ -669,19 +634,6 @@ async def require_authentication(ctx: Context) -> Optional[ProvenaClient]:
         return None
     return client
 
-@mcp.tool()
-async def test_authenticated_action(ctx: Context) -> Dict[str, Any]:
-    """Test tool to verify authentication is working."""
-    client = await require_authentication(ctx)
-    if not client:
-        return {"status": "error", "message": "Authentication required"}
-
-    try:
-        await ctx.info("Access granted. You are authenticated with Provena.")
-        return {"status": "success", "message": "Authenticated and ready to use Provena client."}
-    except Exception as e:
-        await ctx.error(f"Client test failed: {str(e)}")
-        return {"status": "error", "message": f"Client error: {str(e)}"}
 
 
 @mcp.tool()
@@ -760,139 +712,7 @@ async def search_registry(ctx: Context, query: str, limit: Optional[int] = 25, s
     except Exception as e:
         await ctx.error(f"Search failed: {str(e)}")
         return {"status": "error", "message": str(e)}
-@mcp.tool()
-async def search_datasets(ctx: Context, query: str, limit: Optional[int] = 25) -> Dict[str, Any]:
-    """Search for datasets and return full loaded dataset objects plus scores."""
-    client = await require_authentication(ctx)
-    if not client:
-        return {"status": "error", "message": "Authentication required"}
-    try:
-        await ctx.info(f"Searching datasets for '{query}' with limit {limit}")
-        results = await client.datastore.search_datasets(query=query, limit=limit)
-        loaded_datasets = []
-        for item in results.items:
-            loaded_datasets.append({
-                "id": item.id,
-                "score": item.score,
-                "dataset": _dump(item.item)
-            })
-        auth_errors = [{"id": err.id, "score": err.score} for err in results.auth_errors]
-        misc_errors = [{"id": err.id, "score": err.score, "error": err.error_info} for err in results.misc_errors]
-        await ctx.info(f"Found {len(loaded_datasets)} datasets, {len(auth_errors)} auth errors, {len(misc_errors)} other errors")
-        return {
-            "status": "success",
-            "query": query,
-            "loaded_datasets": loaded_datasets,
-            "auth_errors": auth_errors,
-            "misc_errors": misc_errors,
-            "summary": {
-                "successful_items": len(loaded_datasets),
-                "auth_error_items": len(auth_errors),
-                "misc_error_items": len(misc_errors),
-                "total_items": len(loaded_datasets) + len(auth_errors) + len(misc_errors)
-            }
-        }
-    except Exception as e:
-        await ctx.error(f"Dataset search failed: {str(e)}")
-        return {"status": "error", "message": str(e)}
 
-
-@mcp.tool()
-async def fetch_dataset(ctx: Context, dataset_id: str) -> Dict[str, Any]:
-    """Fetch detailed information about a specific dataset and return full object."""
-    client = await require_authentication(ctx)
-    if not client:
-        return {"status": "error", "message": "Authentication required"}
-    try:
-        await ctx.info(f"Fetching dataset {dataset_id}")
-        result = await client.datastore.fetch_dataset(id=dataset_id)
-        if not result.status.success:
-            await ctx.error(f"Fetch failed: {result.status.details}")
-            return {"status": "error", "message": result.status.details}
-        dataset_dict = _dump(result.item)
-        await ctx.info(f"Successfully fetched dataset '{dataset_dict.get('display_name')}'")
-        return {"status": "success", "dataset": dataset_dict}
-    except Exception as e:
-        await ctx.error(f"Failed to fetch dataset: {str(e)}")
-        return {"status": "error", "message": str(e)}
-    
-@mcp.tool()
-async def list_datasets(ctx: Context, page_size: Optional[int] = 10, sort_ascending: Optional[bool] = True, sort_by: Optional[str] = "DISPLAY_NAME") -> Dict[str, Any]:
-    """
-    List datasets from the datastore with pagination.
-
-    Args:
-        page_size: Number of datasets per page (default: 10)
-        sort_ascending: Sort in ascending order (default: True)
-        sort_by: Sort field - DISPLAY_NAME, CREATED_TIME, UPDATED_TIME, RELEASE_TIMESTAMP (aliases CREATED_DATE/UPDATED_DATE also accepted)
-
-    Returns:
-        Dictionary containing paginated dataset list
-    """
-    client = await require_authentication(ctx)
-    if not client:
-        return {"status": "error", "message": "Authentication required"}
-
-    try:
-        from ProvenaInterfaces.RegistryAPI import NoFilterSubtypeListRequest, SortOptions, SortType
-
-        raw_map = {
-            "DISPLAY_NAME": getattr(SortType, "DISPLAY_NAME", None),
-            "CREATED_TIME": getattr(SortType, "CREATED_TIME", None),
-            "UPDATED_TIME": getattr(SortType, "UPDATED_TIME", None),
-            "RELEASE_TIMESTAMP": getattr(SortType, "RELEASE_TIMESTAMP", None),
-        }
-        valid_sort_types = {}
-        for key, member in raw_map.items():
-            if member is not None:
-                valid_sort_types[key] = member
-        if "CREATED_TIME" in valid_sort_types:
-            valid_sort_types["CREATED_DATE"] = valid_sort_types["CREATED_TIME"]
-        if "UPDATED_TIME" in valid_sort_types:
-            valid_sort_types["UPDATED_DATE"] = valid_sort_types["UPDATED_TIME"]
-
-        if sort_by not in valid_sort_types:
-            return {
-                "status": "error",
-                "message": f"Invalid sort_by '{sort_by}'. Valid options: {list(valid_sort_types.keys())}"
-            }
-
-        await ctx.info(f"Listing datasets with page_size={page_size}, sort_ascending={sort_ascending}, sort_by={sort_by}")
-
-        sort_criteria = NoFilterSubtypeListRequest(
-            sort_by=SortOptions(
-                sort_type=valid_sort_types[sort_by],
-                ascending=sort_ascending,
-                begins_with=None
-            ),
-            pagination_key=None,
-            page_size=page_size
-        )
-
-        result = await client.datastore.list_datasets(list_dataset_request=sort_criteria)
-
-        if not result.status.success:
-            await ctx.error(f"List failed: {result.status.details}")
-            return {"status": "error", "message": result.status.details}
-
-        datasets = [_dump(item) for item in result.items]
-
-        await ctx.info(f"Found {len(datasets)} datasets (complete={getattr(result, 'complete_item_count', None)}, total={getattr(result, 'total_item_count', None)})")
-
-        return {
-            "status": "success",
-            "datasets": datasets,
-            "pagination": {
-                "page_size": page_size,
-                "complete_item_count": getattr(result, "complete_item_count", None),
-                "total_item_count": getattr(result, "total_item_count", None),
-                "has_pagination_key": getattr(result, "pagination_key", None) is not None
-            }
-        }
-
-    except Exception as e:
-        await ctx.error(f"Failed to list datasets: {str(e)}")
-        return {"status": "error", "message": str(e)}
 
 @mcp.tool()
 async def fetch_registry_item(ctx: Context, item_id: str) -> Dict[str, Any]:
@@ -1068,6 +888,276 @@ async def explore_downstream(ctx: Context, starting_id: str, depth: int = 1) -> 
     except Exception as e:
         await ctx.error(f"Failed to explore downstream: {str(e)}")
         return {"status": "error", "message": str(e)}
+
+
+@mcp.tool()
+async def research_entity(
+    ctx: Context,
+    entity_id: str,
+    max_depth: int = 3,
+    include_upstream: bool = True,
+    include_downstream: bool = True,
+    include_related_agents: bool = True
+) -> Dict[str, Any]:
+    """
+    Comprehensive entity research tool that automatically gathers ALL related information.
+    
+    This tool performs a complete investigation of a Provena entity, gathering:
+    - Full entity details (metadata, properties, associations)
+    - Upstream lineage (inputs, dependencies, contributing datasets/agents)
+    - Downstream lineage (outputs, derivatives, effected datasets/agents)
+    - All related entities (people, organisations, models, templates)
+    - Provenance graph structure and relationships
+    
+    Use this tool when you need complete context about a dataset, model run, or any registry entity.
+    Perfect for generating reports, understanding data provenance, or investigating relationships.
+    
+    Args:
+        entity_id: The handle/ID of the entity to research (e.g., "10378.1/1234567")
+        max_depth: Maximum depth for lineage traversal (default: 3, recommended range: 1-5)
+        include_upstream: Include upstream lineage exploration (default: True)
+        include_downstream: Include downstream lineage exploration (default: True)
+        include_related_agents: Include related people/organisations (default: True)
+    
+    Returns:
+        Comprehensive dictionary containing:
+        - entity: Full entity details
+        - entity_type: Type and subtype of entity
+        - upstream_lineage: Upstream graph with all contributing entities
+        - downstream_lineage: Downstream graph with all derived entities
+        - related_entities: All connected entities with full details
+        - statistics: Summary counts and metrics
+        - recommendations: Suggested follow-up actions
+    """
+    client = await require_authentication(ctx)
+    if not client:
+        return {"status": "error", "message": "Authentication required"}
+    
+    prov_client = _get_prov_client(client)
+    
+    try:
+        await ctx.info(f"Starting comprehensive research for entity {entity_id}")
+        
+        # Step 1: Fetch the root entity details
+        await ctx.info("Fetching root entity details...")
+        root_entity_result = await client.registry.general_fetch_item(id=entity_id)
+        
+        if not root_entity_result.status.success:
+            await ctx.error(f"Failed to fetch root entity: {root_entity_result.status.details}")
+            return {
+                "status": "error",
+                "message": f"Failed to fetch entity: {root_entity_result.status.details}",
+                "entity_id": entity_id
+            }
+        
+        root_entity = _dump(root_entity_result.item)
+        entity_subtype = root_entity.get('item_subtype', 'UNKNOWN')
+        entity_category = root_entity.get('item_category', 'UNKNOWN')
+        
+        await ctx.info(f"Root entity type: {entity_category}/{entity_subtype}")
+        
+        # Initialize result structure
+        result = {
+            "status": "success",
+            "entity_id": entity_id,
+            "entity": root_entity,
+            "entity_type": {
+                "category": entity_category,
+                "subtype": entity_subtype
+            },
+            "statistics": {
+                "total_related_entities": 0,
+                "upstream_entities": 0,
+                "downstream_entities": 0,
+                "datasets": 0,
+                "model_runs": 0,
+                "people": 0,
+                "organisations": 0,
+                "models": 0,
+                "templates": 0
+            },
+            "recommendations": []
+        }
+        
+        # Step 2: Explore upstream lineage
+        if include_upstream and prov_client:
+            await ctx.info(f"Exploring upstream lineage (depth={max_depth})...")
+            try:
+                upstream_result = await prov_client.explore_upstream(
+                    starting_id=entity_id,
+                    depth=max_depth
+                )
+                upstream_data = _dump(upstream_result)
+                result["upstream_lineage"] = upstream_data
+                
+                # Count upstream nodes
+                upstream_summary = _count_nodes_edges(upstream_data or {})
+                result["statistics"]["upstream_entities"] = upstream_summary.get("nodes", 0) or 0
+                
+                await ctx.info(f"Found {result['statistics']['upstream_entities']} upstream entities")
+            except Exception as e:
+                await ctx.warn(f"Upstream exploration failed: {str(e)}")
+                result["upstream_lineage"] = {"error": str(e)}
+        
+        # Step 3: Explore downstream lineage
+        if include_downstream and prov_client:
+            await ctx.info(f"Exploring downstream lineage (depth={max_depth})...")
+            try:
+                downstream_result = await prov_client.explore_downstream(
+                    starting_id=entity_id,
+                    depth=max_depth
+                )
+                downstream_data = _dump(downstream_result)
+                result["downstream_lineage"] = downstream_data
+                
+                # Count downstream nodes
+                downstream_summary = _count_nodes_edges(downstream_data or {})
+                result["statistics"]["downstream_entities"] = downstream_summary.get("nodes", 0) or 0
+                
+                await ctx.info(f"Found {result['statistics']['downstream_entities']} downstream entities")
+            except Exception as e:
+                await ctx.warn(f"Downstream exploration failed: {str(e)}")
+                result["downstream_lineage"] = {"error": str(e)}
+        
+        # Step 4: For datasets and model runs, get specialized lineage
+        if entity_subtype in ['DATASET', 'MODEL_RUN'] and prov_client:
+            await ctx.info("Fetching specialized lineage for dataset/model run...")
+            
+            # Contributing datasets
+            try:
+                contrib_datasets = await prov_client.get_contributing_datasets(
+                    starting_id=entity_id,
+                    depth=max_depth
+                )
+                result["contributing_datasets"] = _dump(contrib_datasets)
+                await ctx.info("Retrieved contributing datasets")
+            except Exception as e:
+                await ctx.warn(f"Contributing datasets query failed: {str(e)}")
+            
+            # Effected datasets
+            try:
+                effected_datasets = await prov_client.get_effected_datasets(
+                    starting_id=entity_id,
+                    depth=max_depth
+                )
+                result["effected_datasets"] = _dump(effected_datasets)
+                await ctx.info("Retrieved effected datasets")
+            except Exception as e:
+                await ctx.warn(f"Effected datasets query failed: {str(e)}")
+            
+            # Related agents
+            if include_related_agents:
+                try:
+                    contrib_agents = await prov_client.get_contributing_agents(
+                        starting_id=entity_id,
+                        depth=max_depth
+                    )
+                    result["contributing_agents"] = _dump(contrib_agents)
+                    await ctx.info("Retrieved contributing agents")
+                except Exception as e:
+                    await ctx.warn(f"Contributing agents query failed: {str(e)}")
+                
+                try:
+                    effected_agents = await prov_client.get_effected_agents(
+                        starting_id=entity_id,
+                        depth=max_depth
+                    )
+                    result["effected_agents"] = _dump(effected_agents)
+                    await ctx.info("Retrieved effected agents")
+                except Exception as e:
+                    await ctx.warn(f"Effected agents query failed: {str(e)}")
+        
+        # Step 5: Collect and fetch all unique entity IDs from graphs
+        await ctx.info("Collecting all unique entity IDs from lineage graphs...")
+        unique_entity_ids = set()
+        
+        # Extract IDs from all graph responses
+        for key in ['upstream_lineage', 'downstream_lineage', 'contributing_datasets', 
+                    'effected_datasets', 'contributing_agents', 'effected_agents']:
+            if key in result and isinstance(result[key], dict):
+                graph_data = result[key].get('graph', {})
+                if isinstance(graph_data, dict) and 'nodes' in graph_data:
+                    for node in graph_data.get('nodes', []):
+                        if isinstance(node, dict) and 'id' in node:
+                            unique_entity_ids.add(node['id'])
+        
+        # Remove the root entity from the set
+        unique_entity_ids.discard(entity_id)
+        
+        await ctx.info(f"Found {len(unique_entity_ids)} unique related entities")
+        
+        # Step 6: Fetch full details for all related entities
+        related_entities = {}
+        entity_types_count = {}
+        
+        if unique_entity_ids:
+            await ctx.info("Fetching full details for all related entities...")
+            
+            for related_id in list(unique_entity_ids)[:100]:  # Limit to 100 to avoid overwhelming
+                try:
+                    related_result = await client.registry.general_fetch_item(id=related_id)
+                    if related_result.status.success:
+                        related_entity = _dump(related_result.item)
+                        related_entities[related_id] = related_entity
+                        
+                        # Count by type
+                        subtype = related_entity.get('item_subtype', 'UNKNOWN')
+                        entity_types_count[subtype] = entity_types_count.get(subtype, 0) + 1
+                except Exception as e:
+                    await ctx.warn(f"Failed to fetch entity {related_id}: {str(e)}")
+                    continue
+        
+        result["related_entities"] = related_entities
+        result["statistics"]["total_related_entities"] = len(related_entities)
+        
+        # Update statistics with type counts
+        result["statistics"]["datasets"] = entity_types_count.get('DATASET', 0)
+        result["statistics"]["model_runs"] = entity_types_count.get('MODEL_RUN', 0)
+        result["statistics"]["people"] = entity_types_count.get('PERSON', 0)
+        result["statistics"]["organisations"] = entity_types_count.get('ORGANISATION', 0)
+        result["statistics"]["models"] = entity_types_count.get('MODEL', 0)
+        result["statistics"]["templates"] = (
+            entity_types_count.get('DATASET_TEMPLATE', 0) +
+            entity_types_count.get('MODEL_RUN_WORKFLOW_TEMPLATE', 0)
+        )
+        
+        await ctx.info(f"Statistics: {result['statistics']}")
+        
+        # Step 7: Generate recommendations
+        await ctx.info("Generating recommendations...")
+        
+        if result["statistics"]["upstream_entities"] == 0 and entity_subtype == 'DATASET':
+            result["recommendations"].append({
+                "priority": "medium",
+                "action": "Investigate data provenance",
+                "details": "This dataset has no recorded upstream lineage. Consider documenting its sources or creation process."
+            })
+        
+        if result["statistics"]["downstream_entities"] == 0 and entity_category == 'ACTIVITY':
+            result["recommendations"].append({
+                "priority": "low",
+                "action": "Check for outputs",
+                "details": "This activity has no recorded downstream entities. Verify if outputs were registered."
+            })
+        
+        if result["statistics"]["total_related_entities"] > 50:
+            result["recommendations"].append({
+                "priority": "low",
+                "action": "Complex lineage detected",
+                "details": "This entity has many relationships. Consider using visualization tools to understand the full graph."
+            })
+        
+        await ctx.info(f"Research complete! Found {result['statistics']['total_related_entities']} related entities")
+        
+        return result
+        
+    except Exception as e:
+        await ctx.error(f"Entity research failed: {str(e)}")
+        return {
+            "status": "error",
+            "message": str(e),
+            "entity_id": entity_id
+        }
     
 @mcp.tool()
 async def get_current_date(ctx: Context) -> str:
@@ -1082,6 +1172,715 @@ async def get_current_date(ctx: Context) -> str:
     current_date = datetime.now().strftime("%Y-%m-%d")
     await ctx.info(f"Current date: {current_date}")
     return current_date
+
+
+@mcp.tool()
+async def list_entities_summary(
+    ctx: Context,
+    subtype_filter: str,
+    limit: Optional[int] = 50,
+    search_query: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Lightweight entity listing that returns only essential summary information.
+    
+    Perfect for queries like:
+    - "List all model runs for CSIRO"
+    - "Show me all datasets created by person X"
+    - "What models are in the system?"
+    
+    Returns compact summaries instead of full entity details, making it suitable
+    for large result sets (50-100+ entities).
+    
+    Args:
+        subtype_filter: Entity type (DATASET, MODEL_RUN, MODEL, PERSON, ORGANISATION, etc.)
+        limit: Maximum results to return (default: 50, max recommended: 200)
+        search_query: Optional search term to filter results
+    
+    Returns:
+        List of entity summaries with: id, display_name, type, created_date, key_metadata
+    """
+    client = await require_authentication(ctx)
+    if not client:
+        return {"status": "error", "message": "Authentication required"}
+    
+    try:
+        from ProvenaInterfaces.RegistryModels import ItemSubType
+        
+        # Validate and convert subtype
+        try:
+            subtype_enum = ItemSubType(subtype_filter.upper())
+        except ValueError:
+            valid_subtypes = [item.value for item in ItemSubType]
+            return {
+                "status": "error",
+                "message": f"Invalid subtype_filter. Valid options: {valid_subtypes}"
+            }
+        
+        await ctx.info(f"Listing {subtype_filter} entities (limit: {limit})")
+        
+        # If search query provided, use search; otherwise list
+        if search_query:
+            search_result = await client.search.search_registry(
+                query=search_query,
+                limit=limit,
+                subtype_filter=subtype_enum
+            )
+            
+            if not search_result.status.success:
+                return {"status": "error", "message": search_result.status.details}
+            
+            entity_ids = [result.id for result in search_result.results]
+        else:
+            # Use list endpoint
+            from ProvenaInterfaces.RegistryAPI import GeneralListRequest
+            list_request = GeneralListRequest(
+                filter_by=None,
+                sort_by=None,
+                pagination_key=None
+            )
+            
+            list_result = await client.registry.list_general_registry_items(
+                general_list_request=list_request
+            )
+            
+            if not list_result.status.success:
+                return {"status": "error", "message": list_result.status.details}
+            
+            # Filter by subtype and take first 'limit' items
+            entity_ids = [
+                item.id for item in list_result.items 
+                if item.item_subtype == subtype_enum
+            ][:limit]
+        
+        await ctx.info(f"Found {len(entity_ids)} entities, fetching summaries...")
+        
+        # Fetch minimal info for each entity
+        summaries = []
+        for entity_id in entity_ids:
+            try:
+                result = await client.registry.general_fetch_item(id=entity_id)
+                if result.status.success:
+                    entity = _dump(result.item)
+                    
+                    # Extract essential fields only
+                    summary = {
+                        "id": entity_id,
+                        "handle_url": f"https://hdl.handle.net/{entity_id}",
+                        "display_name": entity.get('display_name', 'N/A'),
+                        "type": entity.get('item_subtype', 'UNKNOWN'),
+                        "category": entity.get('item_category', 'UNKNOWN'),
+                        "created_timestamp": entity.get('created_timestamp'),
+                        "updated_timestamp": entity.get('updated_timestamp')
+                    }
+                    
+                    # Add type-specific key fields
+                    if subtype_enum == ItemSubType.DATASET:
+                        cf = entity.get('collection_format', {})
+                        ds_info = cf.get('dataset_info', {})
+                        summary['publisher_id'] = ds_info.get('publisher_id')
+                        summary['created_date'] = ds_info.get('created_date', {}).get('value')
+                        summary['keywords'] = ds_info.get('keywords', [])[:5]  # First 5 keywords
+                        
+                    elif subtype_enum == ItemSubType.MODEL_RUN:
+                        summary['start_time'] = entity.get('start_time')
+                        summary['end_time'] = entity.get('end_time')
+                        associations = entity.get('associations', {})
+                        summary['modeller_id'] = associations.get('modeller_id')
+                        summary['organisation_id'] = associations.get('requesting_organisation_id')
+                        
+                    elif subtype_enum == ItemSubType.MODEL:
+                        summary['name'] = entity.get('name')
+                        summary['documentation_url'] = entity.get('documentation_url')
+                        
+                    elif subtype_enum == ItemSubType.PERSON:
+                        summary['email'] = entity.get('email')
+                        summary['orcid'] = entity.get('orcid')
+                        
+                    elif subtype_enum == ItemSubType.ORGANISATION:
+                        summary['name'] = entity.get('name')
+                        summary['ror'] = entity.get('ror')
+                    
+                    summaries.append(summary)
+                    
+            except Exception as e:
+                await ctx.warn(f"Failed to fetch summary for {entity_id}: {str(e)}")
+                continue
+        
+        await ctx.info(f"Successfully retrieved {len(summaries)} entity summaries")
+        
+        return {
+            "status": "success",
+            "subtype": subtype_filter,
+            "total_count": len(summaries),
+            "search_query": search_query,
+            "summaries": summaries
+        }
+        
+    except Exception as e:
+        await ctx.error(f"Failed to list entity summaries: {str(e)}")
+        return {"status": "error", "message": str(e)}
+
+
+@mcp.tool()
+async def find_related_entities(
+    ctx: Context,
+    entity_id: str,
+    relationship_type: str = "all",
+    entity_types: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Find entities related to a specific entity through various relationship types.
+    Returns lightweight summaries, not full details.
+    
+    Use cases:
+    - "Find all datasets used by this model run"
+    - "Show all model runs by this person"
+    - "List all entities created by this organisation"
+    - "What datasets did this model run produce?"
+    
+    Args:
+        entity_id: The entity to find relationships for
+        relationship_type: Type of relationship
+            - "all": All related entities (default)
+            - "upstream": Entities this depends on (inputs/sources)
+            - "downstream": Entities that depend on this (outputs/derivatives)
+            - "created_by": Entities created by this person/org (for PERSON/ORGANISATION)
+            - "uses": Entities this uses (for MODEL_RUN/MODEL)
+            - "used_by": Entities that use this (for DATASET/MODEL)
+        entity_types: Comma-separated entity types to filter (e.g., "DATASET,MODEL_RUN")
+    
+    Returns:
+        Lightweight list of related entities with id, name, type, and relationship
+    """
+    client = await require_authentication(ctx)
+    if not client:
+        return {"status": "error", "message": "Authentication required"}
+    
+    prov_client = _get_prov_client(client)
+    
+    try:
+        await ctx.info(f"Finding {relationship_type} relationships for {entity_id}")
+        
+        # Fetch the root entity to understand its type
+        root_result = await client.registry.general_fetch_item(id=entity_id)
+        if not root_result.status.success:
+            return {"status": "error", "message": f"Failed to fetch entity: {root_result.status.details}"}
+        
+        root_entity = _dump(root_result.item)
+        root_subtype = root_entity.get('item_subtype', 'UNKNOWN')
+        
+        # Parse entity type filter
+        type_filter = set()
+        if entity_types:
+            type_filter = set(t.strip().upper() for t in entity_types.split(','))
+        
+        related_entities = []
+        
+        # Gather entity IDs based on relationship type
+        entity_ids = set()
+        
+        if relationship_type in ["all", "upstream"] and prov_client:
+            try:
+                upstream = await prov_client.explore_upstream(starting_id=entity_id, depth=2)
+                upstream_data = _dump(upstream)
+                graph = upstream_data.get('graph', {})
+                for node in graph.get('nodes', []):
+                    node_id = node.get('id')
+                    if node_id and node_id != entity_id:
+                        entity_ids.add((node_id, 'upstream'))
+            except Exception as e:
+                await ctx.warn(f"Upstream exploration failed: {str(e)}")
+        
+        if relationship_type in ["all", "downstream"] and prov_client:
+            try:
+                downstream = await prov_client.explore_downstream(starting_id=entity_id, depth=2)
+                downstream_data = _dump(downstream)
+                graph = downstream_data.get('graph', {})
+                for node in graph.get('nodes', []):
+                    node_id = node.get('id')
+                    if node_id and node_id != entity_id:
+                        entity_ids.add((node_id, 'downstream'))
+            except Exception as e:
+                await ctx.warn(f"Downstream exploration failed: {str(e)}")
+        
+        # Special handling for PERSON/ORGANISATION - find created entities
+        if relationship_type in ["all", "created_by"] and root_subtype in ["PERSON", "ORGANISATION"]:
+            # Search for entities that reference this person/org
+            from ProvenaInterfaces.RegistryAPI import GeneralListRequest
+            list_request = GeneralListRequest(filter_by=None, sort_by=None, pagination_key=None)
+            list_result = await client.registry.list_general_registry_items(general_list_request=list_request)
+            
+            if list_result.status.success:
+                for item in list_result.items[:200]:  # Check first 200 items
+                    try:
+                        # Check if this entity references our person/org
+                        item_data = _dump(item)
+                        
+                        # Check various association fields
+                        if root_subtype == "PERSON":
+                            associations = item_data.get('associations', {})
+                            if (associations.get('modeller_id') == entity_id or
+                                associations.get('data_custodian_id') == entity_id):
+                                entity_ids.add((item.id, 'created_by'))
+                        
+                        elif root_subtype == "ORGANISATION":
+                            associations = item_data.get('associations', {})
+                            if (associations.get('organisation_id') == entity_id or
+                                associations.get('requesting_organisation_id') == entity_id):
+                                entity_ids.add((item.id, 'created_by'))
+                            
+                            # For datasets, check publisher
+                            cf = item_data.get('collection_format', {})
+                            ds_info = cf.get('dataset_info', {})
+                            if ds_info.get('publisher_id') == entity_id:
+                                entity_ids.add((item.id, 'created_by'))
+                                
+                    except Exception:
+                        continue
+        
+        await ctx.info(f"Found {len(entity_ids)} related entity IDs")
+        
+        # Fetch minimal info for each related entity
+        for rel_id, rel_type in entity_ids:
+            try:
+                result = await client.registry.general_fetch_item(id=rel_id)
+                if result.status.success:
+                    entity = _dump(result.item)
+                    entity_subtype = entity.get('item_subtype', 'UNKNOWN')
+                    
+                    # Apply type filter
+                    if type_filter and entity_subtype not in type_filter:
+                        continue
+                    
+                    summary = {
+                        "id": rel_id,
+                        "handle_url": f"https://hdl.handle.net/{rel_id}",
+                        "display_name": entity.get('display_name', 'N/A'),
+                        "type": entity_subtype,
+                        "relationship": rel_type,
+                        "created_timestamp": entity.get('created_timestamp')
+                    }
+                    
+                    related_entities.append(summary)
+                    
+            except Exception as e:
+                await ctx.warn(f"Failed to fetch {rel_id}: {str(e)}")
+                continue
+        
+        # Group by relationship type
+        grouped = {}
+        for entity in related_entities:
+            rel_type = entity['relationship']
+            if rel_type not in grouped:
+                grouped[rel_type] = []
+            grouped[rel_type].append(entity)
+        
+        await ctx.info(f"Successfully found {len(related_entities)} related entities")
+        
+        return {
+            "status": "success",
+            "entity_id": entity_id,
+            "root_entity_type": root_subtype,
+            "relationship_type": relationship_type,
+            "type_filter": list(type_filter) if type_filter else None,
+            "total_count": len(related_entities),
+            "grouped_by_relationship": grouped,
+            "all_entities": related_entities
+        }
+        
+    except Exception as e:
+        await ctx.error(f"Failed to find related entities: {str(e)}")
+        return {"status": "error", "message": str(e)}
+
+
+@mcp.tool()
+async def get_entity_associations(
+    ctx: Context,
+    entity_id: str
+) -> Dict[str, Any]:
+    """
+    Get direct associations (people, organizations, related IDs) for an entity.
+    Returns lightweight association information without full entity details.
+    
+    Perfect for queries like:
+    - "Who created this dataset?"
+    - "What organization owns this?"
+    - "Who ran this model?"
+    - "What's the workflow template for this model run?"
+    
+    Args:
+        entity_id: The entity to get associations for
+    
+    Returns:
+        Dictionary of associations with IDs and optional resolved names
+    """
+    client = await require_authentication(ctx)
+    if not client:
+        return {"status": "error", "message": "Authentication required"}
+    
+    try:
+        await ctx.info(f"Fetching associations for {entity_id}")
+        
+        result = await client.registry.general_fetch_item(id=entity_id)
+        if not result.status.success:
+            return {"status": "error", "message": result.status.details}
+        
+        entity = _dump(result.item)
+        entity_subtype = entity.get('item_subtype', 'UNKNOWN')
+        
+        associations_data = {
+            "entity_id": entity_id,
+            "entity_type": entity_subtype,
+            "entity_name": entity.get('display_name', 'N/A'),
+            "associations": {}
+        }
+        
+        # Extract associations based on entity type
+        if entity_subtype == "DATASET":
+            cf = entity.get('collection_format', {})
+            ds_info = cf.get('dataset_info', {})
+            assoc = cf.get('associations', {})
+            
+            associations_data["associations"] = {
+                "publisher_id": ds_info.get('publisher_id'),
+                "organisation_id": assoc.get('organisation_id'),
+                "data_custodian_id": assoc.get('data_custodian_id'),
+                "point_of_contact": assoc.get('point_of_contact')
+            }
+            
+        elif entity_subtype == "MODEL_RUN":
+            associations_data["associations"] = {
+                "workflow_template_id": entity.get('workflow_template_id'),
+                "modeller_id": entity.get('associations', {}).get('modeller_id'),
+                "requesting_organisation_id": entity.get('associations', {}).get('requesting_organisation_id'),
+                "study_id": entity.get('study_id'),
+                "model_version": entity.get('model_version')
+            }
+            
+        elif entity_subtype == "MODEL_RUN_WORKFLOW_TEMPLATE":
+            associations_data["associations"] = {
+                "software_id": entity.get('software_id'),
+                "input_template_count": len(entity.get('input_templates', [])),
+                "output_template_count": len(entity.get('output_templates', []))
+            }
+            
+        elif entity_subtype == "PERSON":
+            associations_data["associations"] = {
+                "email": entity.get('email'),
+                "orcid": entity.get('orcid'),
+                "ethics_approved": entity.get('ethics_approved')
+            }
+            
+        elif entity_subtype == "ORGANISATION":
+            associations_data["associations"] = {
+                "name": entity.get('name'),
+                "ror": entity.get('ror')
+            }
+            
+        elif entity_subtype == "MODEL":
+            associations_data["associations"] = {
+                "name": entity.get('name'),
+                "documentation_url": entity.get('documentation_url'),
+                "source_url": entity.get('source_url')
+            }
+        
+        # Resolve names for ID fields
+        await ctx.info("Resolving association names...")
+        resolved = {}
+        
+        for key, value in associations_data["associations"].items():
+            if value and isinstance(value, str) and '/' in value and key.endswith('_id'):
+                try:
+                    assoc_result = await client.registry.general_fetch_item(id=value)
+                    if assoc_result.status.success:
+                        assoc_entity = _dump(assoc_result.item)
+                        resolved[key] = {
+                            "id": value,
+                            "handle_url": f"https://hdl.handle.net/{value}",
+                            "name": assoc_entity.get('display_name', 'N/A'),
+                            "type": assoc_entity.get('item_subtype', 'UNKNOWN')
+                        }
+                except Exception:
+                    resolved[key] = {"id": value, "name": "Failed to resolve"}
+            else:
+                resolved[key] = value
+        
+        associations_data["resolved_associations"] = resolved
+        associations_data["status"] = "success"
+        
+        await ctx.info(f"Retrieved associations for {entity_subtype}")
+        
+        return associations_data
+        
+    except Exception as e:
+        await ctx.error(f"Failed to get associations: {str(e)}")
+        return {"status": "error", "message": str(e)}
+
+
+@mcp.tool()
+async def compare_entities(
+    ctx: Context,
+    entity_ids: str,
+    comparison_aspects: Optional[str] = "all"
+) -> Dict[str, Any]:
+    """
+    Compare multiple entities side-by-side to highlight differences and similarities.
+    
+    Use cases:
+    - "Compare these three datasets"
+    - "What's the difference between model run A and B?"
+    - "Show similarities between these models"
+    - "Compare metadata quality across these entities"
+    
+    Args:
+        entity_ids: Comma-separated entity IDs to compare (2-5 recommended)
+        comparison_aspects: What to compare
+            - "all": All aspects (default)
+            - "metadata": Basic metadata and properties
+            - "provenance": Lineage and relationships
+            - "associations": People, organizations, related IDs
+            - "quality": Metadata completeness and quality
+    
+    Returns:
+        Side-by-side comparison highlighting differences and similarities
+    """
+    client = await require_authentication(ctx)
+    if not client:
+        return {"status": "error", "message": "Authentication required"}
+    
+    try:
+        # Parse entity IDs
+        ids_list = [eid.strip() for eid in entity_ids.split(',') if eid.strip()]
+        
+        if len(ids_list) < 2:
+            return {"status": "error", "message": "Need at least 2 entity IDs to compare"}
+        
+        if len(ids_list) > 5:
+            await ctx.warn(f"Comparing {len(ids_list)} entities. Consider limiting to 5 for clarity.")
+        
+        await ctx.info(f"Comparing {len(ids_list)} entities: {ids_list}")
+        
+        # Fetch all entities
+        entities = {}
+        for entity_id in ids_list:
+            try:
+                result = await client.registry.general_fetch_item(id=entity_id)
+                if result.status.success:
+                    entities[entity_id] = _dump(result.item)
+                else:
+                    return {
+                        "status": "error",
+                        "message": f"Failed to fetch entity {entity_id}: {result.status.details}"
+                    }
+            except Exception as e:
+                return {"status": "error", "message": f"Error fetching {entity_id}: {str(e)}"}
+        
+        comparison = {
+            "status": "success",
+            "entity_count": len(ids_list),
+            "entity_ids": ids_list,
+            "comparison_aspects": comparison_aspects
+        }
+        
+        # Check if all same type
+        types = [e.get('item_subtype') for e in entities.values()]
+        same_type = len(set(types)) == 1
+        comparison["same_type"] = same_type
+        comparison["types"] = dict(zip(ids_list, types))
+        
+        # Basic metadata comparison
+        if comparison_aspects in ["all", "metadata"]:
+            metadata_comparison = {}
+            
+            for entity_id, entity in entities.items():
+                metadata_comparison[entity_id] = {
+                    "display_name": entity.get('display_name'),
+                    "type": entity.get('item_subtype'),
+                    "category": entity.get('item_category'),
+                    "created_timestamp": entity.get('created_timestamp'),
+                    "updated_timestamp": entity.get('updated_timestamp'),
+                    "has_description": bool(entity.get('description'))
+                }
+                
+                # Type-specific metadata
+                if entity.get('item_subtype') == 'DATASET':
+                    cf = entity.get('collection_format', {})
+                    ds_info = cf.get('dataset_info', {})
+                    metadata_comparison[entity_id].update({
+                        "created_date": ds_info.get('created_date', {}).get('value'),
+                        "published_date": ds_info.get('published_date', {}).get('value'),
+                        "license": ds_info.get('license'),
+                        "has_spatial_info": bool(ds_info.get('spatial_info')),
+                        "has_temporal_info": bool(ds_info.get('temporal_info')),
+                        "keyword_count": len(ds_info.get('keywords', []))
+                    })
+                    
+                elif entity.get('item_subtype') == 'MODEL_RUN':
+                    metadata_comparison[entity_id].update({
+                        "start_time": entity.get('start_time'),
+                        "end_time": entity.get('end_time'),
+                        "has_study": bool(entity.get('study_id')),
+                        "has_model_version": bool(entity.get('model_version'))
+                    })
+            
+            comparison["metadata"] = metadata_comparison
+            
+            # Find differences
+            differences = []
+            similarities = []
+            
+            # Check each field
+            if same_type:
+                sample_fields = metadata_comparison[ids_list[0]].keys()
+                for field in sample_fields:
+                    values = [metadata_comparison[eid].get(field) for eid in ids_list]
+                    unique_values = set(str(v) for v in values if v is not None)
+                    
+                    if len(unique_values) == 0:
+                        similarities.append(f"All missing {field}")
+                    elif len(unique_values) == 1:
+                        similarities.append(f"{field}: {values[0]}")
+                    else:
+                        differences.append(f"{field} differs")
+            
+            comparison["metadata_analysis"] = {
+                "differences": differences,
+                "similarities": similarities
+            }
+        
+        # Associations comparison
+        if comparison_aspects in ["all", "associations"]:
+            associations_comparison = {}
+            
+            for entity_id, entity in entities.items():
+                entity_type = entity.get('item_subtype')
+                assoc_data = {}
+                
+                if entity_type == "DATASET":
+                    cf = entity.get('collection_format', {})
+                    ds_info = cf.get('dataset_info', {})
+                    assoc = cf.get('associations', {})
+                    assoc_data = {
+                        "publisher_id": ds_info.get('publisher_id'),
+                        "organisation_id": assoc.get('organisation_id'),
+                        "data_custodian_id": assoc.get('data_custodian_id')
+                    }
+                    
+                elif entity_type == "MODEL_RUN":
+                    assoc = entity.get('associations', {})
+                    assoc_data = {
+                        "modeller_id": assoc.get('modeller_id'),
+                        "requesting_organisation_id": assoc.get('requesting_organisation_id'),
+                        "workflow_template_id": entity.get('workflow_template_id')
+                    }
+                
+                associations_comparison[entity_id] = assoc_data
+            
+            comparison["associations"] = associations_comparison
+            
+            # Find common associations
+            if same_type and associations_comparison:
+                common_fields = {}
+                sample_fields = associations_comparison[ids_list[0]].keys()
+                
+                for field in sample_fields:
+                    values = [associations_comparison[eid].get(field) for eid in ids_list]
+                    unique_values = set(v for v in values if v)
+                    
+                    if len(unique_values) == 1:
+                        common_fields[field] = list(unique_values)[0]
+                
+                comparison["common_associations"] = common_fields
+        
+        # Provenance comparison (lightweight)
+        if comparison_aspects in ["all", "provenance"]:
+            prov_client = _get_prov_client(client)
+            if prov_client:
+                provenance_comparison = {}
+                
+                for entity_id in ids_list:
+                    try:
+                        # Quick upstream/downstream counts
+                        upstream_result = await prov_client.explore_upstream(starting_id=entity_id, depth=1)
+                        downstream_result = await prov_client.explore_downstream(starting_id=entity_id, depth=1)
+                        
+                        up_data = _dump(upstream_result)
+                        down_data = _dump(downstream_result)
+                        
+                        up_count = _count_nodes_edges(up_data or {}).get('nodes', 0) or 0
+                        down_count = _count_nodes_edges(down_data or {}).get('nodes', 0) or 0
+                        
+                        provenance_comparison[entity_id] = {
+                            "upstream_entities": up_count - 1,  # Exclude self
+                            "downstream_entities": down_count - 1,
+                            "total_connections": (up_count + down_count - 2)
+                        }
+                    except Exception as e:
+                        provenance_comparison[entity_id] = {
+                            "error": f"Failed to get provenance: {str(e)}"
+                        }
+                
+                comparison["provenance"] = provenance_comparison
+        
+        # Quality comparison
+        if comparison_aspects in ["all", "quality"]:
+            quality_comparison = {}
+            
+            for entity_id, entity in entities.items():
+                issues = []
+                score = 100
+                
+                # Check description
+                if not entity.get('description'):
+                    issues.append("Missing description")
+                    score -= 15
+                
+                # Type-specific checks
+                if entity.get('item_subtype') == 'DATASET':
+                    cf = entity.get('collection_format', {})
+                    ds_info = cf.get('dataset_info', {})
+                    
+                    if not ds_info.get('keywords'):
+                        issues.append("No keywords")
+                        score -= 10
+                    
+                    if not ds_info.get('spatial_info'):
+                        issues.append("No spatial coverage")
+                        score -= 10
+                    
+                    if not ds_info.get('temporal_info'):
+                        issues.append("No temporal coverage")
+                        score -= 10
+                    
+                    if not ds_info.get('purpose'):
+                        issues.append("No purpose statement")
+                        score -= 10
+                
+                quality_comparison[entity_id] = {
+                    "quality_score": max(0, score),
+                    "issues": issues,
+                    "issue_count": len(issues)
+                }
+            
+            comparison["quality"] = quality_comparison
+            
+            # Rank by quality
+            sorted_by_quality = sorted(
+                quality_comparison.items(),
+                key=lambda x: x[1]['quality_score'],
+                reverse=True
+            )
+            comparison["quality_ranking"] = [eid for eid, _ in sorted_by_quality]
+        
+        await ctx.info(f"Comparison complete for {len(ids_list)} entities")
+        
+        return comparison
+        
+    except Exception as e:
+        await ctx.error(f"Failed to compare entities: {str(e)}")
+        return {"status": "error", "message": str(e)}
+
 
 @mcp.tool()
 async def create_model(
