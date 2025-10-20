@@ -268,38 +268,6 @@ IMPORTANT: This is for DATASETS (actual data items), NOT dataset templates.
 2. **COLLECT INFORMATION** (Ask conversationally, accept any format)
    Reference register_dataset tool documentation for all fields:
    
-   **IMPORTANT (7 required):**
-   - name, description, publisher_id, organisation_id
-   - created_date, published_date, license
-   
-   **ACCESS (3):**
-   - access_reposited (if False, MUST ask for URI and description)
-   - access_uri, access_description
-   
-   **APPROVALS (8 booleans):**
-   - ethics_registration_relevant, ethics_registration_obtained
-   - ethics_access_relevant, ethics_access_obtained
-   - indigenous_knowledge_relevant, indigenous_knowledge_obtained
-   - export_controls_relevant, export_controls_obtained
-   
-   **METADATA (4):**
-   - purpose, rights_holder, usage_limitations, preferred_citation
-   
-   **SPATIAL (3):**
-   - coverage, extent, resolution
-   
-   **TEMPORAL (3):**
-   - begin_date, end_date, resolution
-   
-   **LISTS (2):**
-   - formats, keywords
-   
-   **PEOPLE (2):**
-   - data_custodian_id, point_of_contact
-
-   **OTHER (1):**
-    - user_metadata (optional - custom JSON)
-   
    Convert user input to expected formats (e.g., YYYY-MM-DD for dates).
    For IDs (publisher, organisation, custodian), offer to search if needed.
 
@@ -334,28 +302,6 @@ def register_entity_workflow() -> str:
 
 2. **COLLECT INFORMATION** (Ask conversationally for EVERY field)
    
-   **ORGANISATION:**
-   - name (required)
-   - display_name (optional)
-   - ror (optional - Research Organization Registry ID)
-   - user_metadata (optional - custom JSON)
-   
-   **PERSON:**
-   - first_name (required)
-   - last_name (required)
-   - email (required)
-   - display_name (optional)
-   - orcid (optional - researcher ID)
-   - ethics_approved (required boolean)
-   - user_metadata (optional - custom JSON)
-   
-   **MODEL:**
-   - name (required)
-   - description (required)
-   - documentation_url (required)
-   - source_url (required)
-   - display_name (optional)
-   - user_metadata (optional - custom JSON)
 
 3. **VALIDATION & CONFIRMATION**
    Show formatted summary of all collected fields.
@@ -1178,152 +1124,6 @@ async def get_current_date(ctx: Context) -> str:
     return current_date
 
 
-@mcp.tool()
-async def list_entities_summary(
-    ctx: Context,
-    subtype_filter: str,
-    limit: Optional[int] = 50,
-    search_query: Optional[str] = None
-) -> Dict[str, Any]:
-    """
-    Lightweight entity listing that returns only essential summary information.
-    
-    Perfect for queries like:
-    - "List all model runs for CSIRO"
-    - "Show me all datasets created by person X"
-    - "What models are in the system?"
-    
-    Returns compact summaries instead of full entity details, making it suitable
-    for large result sets (50-100+ entities).
-    
-    Args:
-        subtype_filter: Entity type (DATASET, MODEL_RUN, MODEL, PERSON, ORGANISATION, etc.)
-        limit: Maximum results to return (default: 50, max recommended: 200)
-        search_query: Optional search term to filter results
-    
-    Returns:
-        List of entity summaries with: id, display_name, type, created_date, key_metadata
-    """
-    client = await require_authentication(ctx)
-    if not client:
-        return {"status": "error", "message": "Authentication required"}
-    
-    try:
-        from ProvenaInterfaces.RegistryModels import ItemSubType
-        
-        # Validate and convert subtype
-        try:
-            subtype_enum = ItemSubType(subtype_filter.upper())
-        except ValueError:
-            valid_subtypes = [item.value for item in ItemSubType]
-            return {
-                "status": "error",
-                "message": f"Invalid subtype_filter. Valid options: {valid_subtypes}"
-            }
-        
-        await ctx.info(f"Listing {subtype_filter} entities (limit: {limit})")
-        
-        # If search query provided, use search; otherwise list
-        if search_query:
-            search_result = await client.search.search_registry(
-                query=search_query,
-                limit=limit,
-                subtype_filter=subtype_enum
-            )
-            
-            if not search_result.status.success:
-                return {"status": "error", "message": search_result.status.details}
-            
-            entity_ids = [result.id for result in search_result.results]
-        else:
-            # Use list endpoint
-            from ProvenaInterfaces.RegistryAPI import GeneralListRequest
-            list_request = GeneralListRequest(
-                filter_by=None,
-                sort_by=None,
-                pagination_key=None
-            )
-            
-            list_result = await client.registry.list_general_registry_items(
-                general_list_request=list_request
-            )
-            
-            if not list_result.status.success:
-                return {"status": "error", "message": list_result.status.details}
-            
-            # Filter by subtype and take first 'limit' items
-            entity_ids = [
-                item.id for item in list_result.items 
-                if item.item_subtype == subtype_enum
-            ][:limit]
-        
-        await ctx.info(f"Found {len(entity_ids)} entities, fetching summaries...")
-        
-        # Fetch minimal info for each entity
-        summaries = []
-        for entity_id in entity_ids:
-            try:
-                result = await client.registry.general_fetch_item(id=entity_id)
-                if result.status.success:
-                    entity = _dump(result.item)
-                    
-                    # Extract essential fields only
-                    summary = {
-                        "id": entity_id,
-                        "handle_url": f"https://hdl.handle.net/{entity_id}",
-                        "display_name": entity.get('display_name', 'N/A'),
-                        "type": entity.get('item_subtype', 'UNKNOWN'),
-                        "category": entity.get('item_category', 'UNKNOWN'),
-                        "created_timestamp": entity.get('created_timestamp'),
-                        "updated_timestamp": entity.get('updated_timestamp')
-                    }
-                    
-                    # Add type-specific key fields
-                    if subtype_enum == ItemSubType.DATASET:
-                        cf = entity.get('collection_format', {})
-                        ds_info = cf.get('dataset_info', {})
-                        summary['publisher_id'] = ds_info.get('publisher_id')
-                        summary['created_date'] = ds_info.get('created_date', {}).get('value')
-                        summary['keywords'] = ds_info.get('keywords', [])[:5]  # First 5 keywords
-                        
-                    elif subtype_enum == ItemSubType.MODEL_RUN:
-                        summary['start_time'] = entity.get('start_time')
-                        summary['end_time'] = entity.get('end_time')
-                        associations = entity.get('associations', {})
-                        summary['modeller_id'] = associations.get('modeller_id')
-                        summary['organisation_id'] = associations.get('requesting_organisation_id')
-                        
-                    elif subtype_enum == ItemSubType.MODEL:
-                        summary['name'] = entity.get('name')
-                        summary['documentation_url'] = entity.get('documentation_url')
-                        
-                    elif subtype_enum == ItemSubType.PERSON:
-                        summary['email'] = entity.get('email')
-                        summary['orcid'] = entity.get('orcid')
-                        
-                    elif subtype_enum == ItemSubType.ORGANISATION:
-                        summary['name'] = entity.get('name')
-                        summary['ror'] = entity.get('ror')
-                    
-                    summaries.append(summary)
-                    
-            except Exception as e:
-                await ctx.warn(f"Failed to fetch summary for {entity_id}: {str(e)}")
-                continue
-        
-        await ctx.info(f"Successfully retrieved {len(summaries)} entity summaries")
-        
-        return {
-            "status": "success",
-            "subtype": subtype_filter,
-            "total_count": len(summaries),
-            "search_query": search_query,
-            "summaries": summaries
-        }
-        
-    except Exception as e:
-        await ctx.error(f"Failed to list entity summaries: {str(e)}")
-        return {"status": "error", "message": str(e)}
 
 
 @mcp.tool()
@@ -1342,6 +1142,10 @@ async def find_related_entities(
     - "Show all model runs by this person"
     - "List all entities created by this organisation"
     - "What datasets did this model run produce?"
+    
+    IMPORTANT: For "created_by" relationships (finding entities associated with a PERSON or 
+    ORGANISATION), this tool fetches full entity details to check association fields. This 
+    ensures accurate results but may be slower when checking many entities.
     
     Args:
         entity_id: The entity to find relationships for
@@ -1394,7 +1198,7 @@ async def find_related_entities(
                     if node_id and node_id != entity_id:
                         entity_ids.add((node_id, 'upstream'))
             except Exception as e:
-                await ctx.warn(f"Upstream exploration failed: {str(e)}")
+                await ctx.info(f"Upstream exploration failed: {str(e)}")
         
         if relationship_type in ["all", "downstream"] and prov_client:
             try:
@@ -1406,7 +1210,16 @@ async def find_related_entities(
                     if node_id and node_id != entity_id:
                         entity_ids.add((node_id, 'downstream'))
             except Exception as e:
-                await ctx.warn(f"Downstream exploration failed: {str(e)}")
+                await ctx.info(f"Downstream exploration failed: {str(e)}")
+        
+        # Validate created_by is only used for PERSON/ORGANISATION
+        if relationship_type == "created_by" and root_subtype not in ["PERSON", "ORGANISATION"]:
+            return {
+                "status": "error",
+                "message": f"'created_by' relationship type is only valid for PERSON or ORGANISATION entities. "
+                          f"Entity {entity_id} is of type {root_subtype}. "
+                          f"For {root_subtype} entities, try 'used_by', 'upstream', or 'downstream' instead."
+            }
         
         # Special handling for PERSON/ORGANISATION - find created entities
         if relationship_type in ["all", "created_by"] and root_subtype in ["PERSON", "ORGANISATION"]:
@@ -1416,31 +1229,61 @@ async def find_related_entities(
             list_result = await client.registry.list_general_registry_items(general_list_request=list_request)
             
             if list_result.status.success:
+                await ctx.info(f"Checking {len(list_result.items[:200])} items for associations with {entity_id}")
                 for item in list_result.items[:200]:  # Check first 200 items
                     try:
-                        # Check if this entity references our person/org
-                        item_data = _dump(item)
+                        # Get the item ID - handle both object and dict formats
+                        item_id = item.id if hasattr(item, 'id') else item.get('id') if isinstance(item, dict) else None
+                        if not item_id:
+                            continue
                         
-                        # Check various association fields
+                        # IMPORTANT: Fetch full entity details to get complete associations data
+                        # The list API returns lightweight objects without nested fields
+                        full_item_result = await client.registry.general_fetch_item(id=item_id)
+                        if not full_item_result.status.success:
+                            continue
+                        
+                        # Now work with the full entity data
+                        item_data = _dump(full_item_result.item)
+                        
+                        # Check various association fields based on entity type
                         if root_subtype == "PERSON":
+                            # Check MODEL_RUN associations
                             associations = item_data.get('associations', {})
                             if (associations.get('modeller_id') == entity_id or
                                 associations.get('data_custodian_id') == entity_id):
-                                entity_ids.add((item.id, 'created_by'))
+                                entity_ids.add((item_id, 'created_by'))
+                            
+                            # For datasets, check collection_format associations
+                            cf = item_data.get('collection_format', {})
+                            if cf:
+                                cf_assoc = cf.get('associations', {})
+                                if (cf_assoc.get('data_custodian_id') == entity_id or
+                                    cf_assoc.get('point_of_contact') == entity_id):
+                                    entity_ids.add((item_id, 'created_by'))
                         
                         elif root_subtype == "ORGANISATION":
+                            # Check MODEL_RUN associations
                             associations = item_data.get('associations', {})
                             if (associations.get('organisation_id') == entity_id or
                                 associations.get('requesting_organisation_id') == entity_id):
-                                entity_ids.add((item.id, 'created_by'))
+                                entity_ids.add((item_id, 'created_by'))
                             
-                            # For datasets, check publisher
+                            # For datasets, check collection_format associations and publisher
                             cf = item_data.get('collection_format', {})
-                            ds_info = cf.get('dataset_info', {})
-                            if ds_info.get('publisher_id') == entity_id:
-                                entity_ids.add((item.id, 'created_by'))
+                            if cf:
+                                ds_info = cf.get('dataset_info', {})
+                                if ds_info.get('publisher_id') == entity_id:
+                                    entity_ids.add((item_id, 'created_by'))
                                 
-                    except Exception:
+                                cf_assoc = cf.get('associations', {})
+                                if cf_assoc.get('organisation_id') == entity_id:
+                                    entity_ids.add((item_id, 'created_by'))
+                                
+                    except Exception as e:
+                        # Use item_id if available, otherwise try to extract from item
+                        error_id = item_id if 'item_id' in locals() else (item.get('id') if isinstance(item, dict) else 'unknown')
+                        await ctx.info(f"Error checking item {error_id}: {str(e)}")
                         continue
         
         await ctx.info(f"Found {len(entity_ids)} related entity IDs")
@@ -1619,270 +1462,6 @@ async def get_entity_associations(
         
     except Exception as e:
         await ctx.error(f"Failed to get associations: {str(e)}")
-        return {"status": "error", "message": str(e)}
-
-
-@mcp.tool()
-async def compare_entities(
-    ctx: Context,
-    entity_ids: str,
-    comparison_aspects: Optional[str] = "all"
-) -> Dict[str, Any]:
-    """
-    Compare multiple entities side-by-side to highlight differences and similarities.
-    
-    Use cases:
-    - "Compare these three datasets"
-    - "What's the difference between model run A and B?"
-    - "Show similarities between these models"
-    - "Compare metadata quality across these entities"
-    
-    Args:
-        entity_ids: Comma-separated entity IDs to compare (2-5 recommended)
-        comparison_aspects: What to compare
-            - "all": All aspects (default)
-            - "metadata": Basic metadata and properties
-            - "provenance": Lineage and relationships
-            - "associations": People, organizations, related IDs
-            - "quality": Metadata completeness and quality
-    
-    Returns:
-        Side-by-side comparison highlighting differences and similarities
-    """
-    client = await require_authentication(ctx)
-    if not client:
-        return {"status": "error", "message": "Authentication required"}
-    
-    try:
-        # Parse entity IDs
-        ids_list = [eid.strip() for eid in entity_ids.split(',') if eid.strip()]
-        
-        if len(ids_list) < 2:
-            return {"status": "error", "message": "Need at least 2 entity IDs to compare"}
-        
-        if len(ids_list) > 5:
-            await ctx.warn(f"Comparing {len(ids_list)} entities. Consider limiting to 5 for clarity.")
-        
-        await ctx.info(f"Comparing {len(ids_list)} entities: {ids_list}")
-        
-        # Fetch all entities
-        entities = {}
-        for entity_id in ids_list:
-            try:
-                result = await client.registry.general_fetch_item(id=entity_id)
-                if result.status.success:
-                    entities[entity_id] = _dump(result.item)
-                else:
-                    return {
-                        "status": "error",
-                        "message": f"Failed to fetch entity {entity_id}: {result.status.details}"
-                    }
-            except Exception as e:
-                return {"status": "error", "message": f"Error fetching {entity_id}: {str(e)}"}
-        
-        comparison = {
-            "status": "success",
-            "entity_count": len(ids_list),
-            "entity_ids": ids_list,
-            "comparison_aspects": comparison_aspects
-        }
-        
-        # Check if all same type
-        types = [e.get('item_subtype') for e in entities.values()]
-        same_type = len(set(types)) == 1
-        comparison["same_type"] = same_type
-        comparison["types"] = dict(zip(ids_list, types))
-        
-        # Basic metadata comparison
-        if comparison_aspects in ["all", "metadata"]:
-            metadata_comparison = {}
-            
-            for entity_id, entity in entities.items():
-                metadata_comparison[entity_id] = {
-                    "display_name": entity.get('display_name'),
-                    "type": entity.get('item_subtype'),
-                    "category": entity.get('item_category'),
-                    "created_timestamp": entity.get('created_timestamp'),
-                    "updated_timestamp": entity.get('updated_timestamp'),
-                    "has_description": bool(entity.get('description'))
-                }
-                
-                # Type-specific metadata
-                if entity.get('item_subtype') == 'DATASET':
-                    cf = entity.get('collection_format', {})
-                    ds_info = cf.get('dataset_info', {})
-                    metadata_comparison[entity_id].update({
-                        "created_date": ds_info.get('created_date', {}).get('value'),
-                        "published_date": ds_info.get('published_date', {}).get('value'),
-                        "license": ds_info.get('license'),
-                        "has_spatial_info": bool(ds_info.get('spatial_info')),
-                        "has_temporal_info": bool(ds_info.get('temporal_info')),
-                        "keyword_count": len(ds_info.get('keywords', []))
-                    })
-                    
-                elif entity.get('item_subtype') == 'MODEL_RUN':
-                    metadata_comparison[entity_id].update({
-                        "start_time": entity.get('start_time'),
-                        "end_time": entity.get('end_time'),
-                        "has_study": bool(entity.get('study_id')),
-                        "has_model_version": bool(entity.get('model_version'))
-                    })
-            
-            comparison["metadata"] = metadata_comparison
-            
-            # Find differences
-            differences = []
-            similarities = []
-            
-            # Check each field
-            if same_type:
-                sample_fields = metadata_comparison[ids_list[0]].keys()
-                for field in sample_fields:
-                    values = [metadata_comparison[eid].get(field) for eid in ids_list]
-                    unique_values = set(str(v) for v in values if v is not None)
-                    
-                    if len(unique_values) == 0:
-                        similarities.append(f"All missing {field}")
-                    elif len(unique_values) == 1:
-                        similarities.append(f"{field}: {values[0]}")
-                    else:
-                        differences.append(f"{field} differs")
-            
-            comparison["metadata_analysis"] = {
-                "differences": differences,
-                "similarities": similarities
-            }
-        
-        # Associations comparison
-        if comparison_aspects in ["all", "associations"]:
-            associations_comparison = {}
-            
-            for entity_id, entity in entities.items():
-                entity_type = entity.get('item_subtype')
-                assoc_data = {}
-                
-                if entity_type == "DATASET":
-                    cf = entity.get('collection_format', {})
-                    ds_info = cf.get('dataset_info', {})
-                    assoc = cf.get('associations', {})
-                    assoc_data = {
-                        "publisher_id": ds_info.get('publisher_id'),
-                        "organisation_id": assoc.get('organisation_id'),
-                        "data_custodian_id": assoc.get('data_custodian_id')
-                    }
-                    
-                elif entity_type == "MODEL_RUN":
-                    assoc = entity.get('associations', {})
-                    assoc_data = {
-                        "modeller_id": assoc.get('modeller_id'),
-                        "requesting_organisation_id": assoc.get('requesting_organisation_id'),
-                        "workflow_template_id": entity.get('workflow_template_id')
-                    }
-                
-                associations_comparison[entity_id] = assoc_data
-            
-            comparison["associations"] = associations_comparison
-            
-            # Find common associations
-            if same_type and associations_comparison:
-                common_fields = {}
-                sample_fields = associations_comparison[ids_list[0]].keys()
-                
-                for field in sample_fields:
-                    values = [associations_comparison[eid].get(field) for eid in ids_list]
-                    unique_values = set(v for v in values if v)
-                    
-                    if len(unique_values) == 1:
-                        common_fields[field] = list(unique_values)[0]
-                
-                comparison["common_associations"] = common_fields
-        
-        # Provenance comparison (lightweight)
-        if comparison_aspects in ["all", "provenance"]:
-            prov_client = _get_prov_client(client)
-            if prov_client:
-                provenance_comparison = {}
-                
-                for entity_id in ids_list:
-                    try:
-                        # Quick upstream/downstream counts
-                        upstream_result = await prov_client.explore_upstream(starting_id=entity_id, depth=1)
-                        downstream_result = await prov_client.explore_downstream(starting_id=entity_id, depth=1)
-                        
-                        up_data = _dump(upstream_result)
-                        down_data = _dump(downstream_result)
-                        
-                        up_count = _count_nodes_edges(up_data or {}).get('nodes', 0) or 0
-                        down_count = _count_nodes_edges(down_data or {}).get('nodes', 0) or 0
-                        
-                        provenance_comparison[entity_id] = {
-                            "upstream_entities": up_count - 1,  # Exclude self
-                            "downstream_entities": down_count - 1,
-                            "total_connections": (up_count + down_count - 2)
-                        }
-                    except Exception as e:
-                        provenance_comparison[entity_id] = {
-                            "error": f"Failed to get provenance: {str(e)}"
-                        }
-                
-                comparison["provenance"] = provenance_comparison
-        
-        # Quality comparison
-        if comparison_aspects in ["all", "quality"]:
-            quality_comparison = {}
-            
-            for entity_id, entity in entities.items():
-                issues = []
-                score = 100
-                
-                # Check description
-                if not entity.get('description'):
-                    issues.append("Missing description")
-                    score -= 15
-                
-                # Type-specific checks
-                if entity.get('item_subtype') == 'DATASET':
-                    cf = entity.get('collection_format', {})
-                    ds_info = cf.get('dataset_info', {})
-                    
-                    if not ds_info.get('keywords'):
-                        issues.append("No keywords")
-                        score -= 10
-                    
-                    if not ds_info.get('spatial_info'):
-                        issues.append("No spatial coverage")
-                        score -= 10
-                    
-                    if not ds_info.get('temporal_info'):
-                        issues.append("No temporal coverage")
-                        score -= 10
-                    
-                    if not ds_info.get('purpose'):
-                        issues.append("No purpose statement")
-                        score -= 10
-                
-                quality_comparison[entity_id] = {
-                    "quality_score": max(0, score),
-                    "issues": issues,
-                    "issue_count": len(issues)
-                }
-            
-            comparison["quality"] = quality_comparison
-            
-            # Rank by quality
-            sorted_by_quality = sorted(
-                quality_comparison.items(),
-                key=lambda x: x[1]['quality_score'],
-                reverse=True
-            )
-            comparison["quality_ranking"] = [eid for eid, _ in sorted_by_quality]
-        
-        await ctx.info(f"Comparison complete for {len(ids_list)} entities")
-        
-        return comparison
-        
-    except Exception as e:
-        await ctx.error(f"Failed to compare entities: {str(e)}")
         return {"status": "error", "message": str(e)}
 
 
