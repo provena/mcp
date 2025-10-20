@@ -277,7 +277,8 @@ IMPORTANT: This is for DATASETS (actual data items), NOT dataset templates.
    - access_uri, access_description
    
    **APPROVALS (8 booleans):**
-   - ethics_registration, ethics_access
+   - ethics_registration_relevant, ethics_registration_obtained
+   - ethics_access_relevant, ethics_access_obtained
    - indigenous_knowledge_relevant, indigenous_knowledge_obtained
    - export_controls_relevant, export_controls_obtained
    
@@ -295,6 +296,9 @@ IMPORTANT: This is for DATASETS (actual data items), NOT dataset templates.
    
    **PEOPLE (2):**
    - data_custodian_id, point_of_contact
+
+   **OTHER (1):**
+    - user_metadata (optional - custom JSON)
    
    Convert user input to expected formats (e.g., YYYY-MM-DD for dates).
    For IDs (publisher, organisation, custodian), offer to search if needed.
