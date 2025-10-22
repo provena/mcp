@@ -10,19 +10,13 @@ _As a researcher using Provena, I want to interact with the system through a nat
 
 ## Proof of Concept
 
-This project’s current proof of concept uses **Claude Desktop** as both the LLM client and host. The focus is on:
+This project’s current proof of concept uses **Custom Terminal Based Chatbot** as both the LLM client and host. The focus is on:
 
 - Implementing the **MCP server** that exposes Provena tools (e.g., `get_record`, `create_record`, etc.)
 - Handling **authentication and secure communication** with the Provena API
 - Demonstrating that a conversational AI can successfully interact with Provena’s API for real metadata workflows
 
 This POC validates the technical feasibility of using AI to reduce metadata management complexity in research systems like Provena.
-
-## Features
-- Secure authentication with Provena using device flow
-- Tokens stored in your OS keyring (never in plain text files)
-- No sensitive files committed to the repo
-- Simple local dev setup
 
 ## Setup
 
@@ -67,7 +61,7 @@ Sensitive and temp files are ignored by default (see `.gitignore`).
 - [x] **Set up remote MCP server foundations**  
   Create basic structure for the server, tooling interfaces, and plugin registration.
 
-- [ ] **Define basic tool definitions**  
+- [x] **Define basic tool definitions**  
   Implement 'mock' `get_record`, `search_data`, `create_record`, `modify_record` tools.
 
 - [x] **Create Terminal based MCP Client chatbot**  
@@ -78,17 +72,17 @@ Sensitive and temp files are ignored by default (see `.gitignore`).
     - [x] Register the MCP Server as an OAuth Client in Provena
     - [x] Implement OAuth Authorization Code Flow in MCP Server
 
-- [ ] **Connect MCP server tools to real Provena API endpoints**  
+- [x] **Connect MCP server tools to real Provena API endpoints**  
       Begin with read operations, then expand to write/update.
-    - [ ] Implement `get_record`
-    - [ ] Implement `search_data`
-    - [ ] Implement `create_record`
-    - [ ] Implement `modify_record`
+    - [x] Implement `get_record`
+    - [x] Implement `search_data`
+    - [x] Implement `create_record`
+    - [x] Implement `modify_record`
           
-- [ ] **Validate full conversational flow**  
+- [x] **Validate full conversational flow**  
   User → Claude → MCP client → server tools → Provena API → useful response → back to user.
 
-- [ ] **Evaluate UX: Is it actually simpler and more efficient?**  
+- [x] **Evaluate UX: Is it actually simpler and more efficient?**  
   Compare time and steps to complete a task via:
   - Traditional Provena UI
   - Conversational AI + MCP tools
