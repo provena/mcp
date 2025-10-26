@@ -1,10 +1,15 @@
-from http import client
+"""Provena MCP server tools and prompts.
+
+This module wires Provena client calls into FastMCP tools and prompts.
+The file is intentionally conservative about behaviour changes: edits here
+are limited to small quality / typing fixes and correctness adjustments.
+"""
+
 import sys
 import os
 import asyncio
 import json
-from typing import Optional, Dict, Any
-from typing import Tuple
+from typing import Optional, Dict, Any, Tuple
 
 from fastmcp import FastMCP, Context
 from provenaclient import ProvenaClient, Config
@@ -164,7 +169,12 @@ def _dump(obj):
     if isinstance(obj, (list, tuple)):
         return [_dump(o) for o in obj]
     if hasattr(obj, "model_dump"):
-        return obj.model_dump(mode="json")
+        try:
+            # model_dump() returns Python primitives (dict/list) in pydantic v2.
+            return obj.model_dump()
+        except TypeError:
+            # Fallback to json-compatible dump
+            return obj.model_dump(mode="json")
     return obj
 
 @mcp.tool()
@@ -752,7 +762,8 @@ async def get_registry_items_count(ctx: Context) -> Dict[str, Any]:
         return {"status": "error", "message": str(e)}
 
 
-def _get_prov_client(client: ProvenaClient):
+def _get_prov_client(client: ProvenaClient) -> Optional[Any]:
+    """Return the provenance API client if available on a ProvenaClient instance."""
     return getattr(client, "prov_api", None)
 
 
@@ -1136,6 +1147,9 @@ async def find_related_entities(
     """
     Find entities related to a specific entity through various relationship types.
     Returns lightweight summaries, not full details.
+    DO NOT AUTOMATICALLY FETCH FULL DETAILS FOR ALL ENTITIES, ASK FIRST IF NEEDED.
+    Just use all for relationship_type regarding people or organisations
+    If nothing returns, the entity likely has no such relationships.
     
     Use cases:
     - "Find all datasets used by this model run"
@@ -1143,17 +1157,12 @@ async def find_related_entities(
     - "List all entities created by this organisation"
     - "What datasets did this model run produce?"
     
-    IMPORTANT: For "created_by" relationships (finding entities associated with a PERSON or 
-    ORGANISATION), this tool fetches full entity details to check association fields. This 
-    ensures accurate results but may be slower when checking many entities.
-    
     Args:
         entity_id: The entity to find relationships for
         relationship_type: Type of relationship
             - "all": All related entities (default)
             - "upstream": Entities this depends on (inputs/sources)
             - "downstream": Entities that depend on this (outputs/derivatives)
-            - "created_by": Entities created by this person/org (for PERSON/ORGANISATION)
             - "uses": Entities this uses (for MODEL_RUN/MODEL)
             - "used_by": Entities that use this (for DATASET/MODEL)
         entity_types: Comma-separated entity types to filter (e.g., "DATASET,MODEL_RUN")
@@ -1261,6 +1270,44 @@ async def find_related_entities(
                                 if (cf_assoc.get('data_custodian_id') == entity_id or
                                     cf_assoc.get('point_of_contact') == entity_id):
                                     entity_ids.add((item_id, 'created_by'))
+
+                        # Additional: templates (dataset or workflow templates) often don't
+                        # populate the same association fields as datasets/model_runs.
+                        # Check common top-level creator fields and user_metadata so
+                        # templates created by a person/org are included in results.
+                        item_subtype = item_data.get('item_subtype', '')
+                        if item_subtype in [
+                            'DATASET_TEMPLATE',
+                            'MODEL_RUN_WORKFLOW_TEMPLATE'
+                        ]:
+                            # common explicit creator fields
+                            creator_fields = [
+                                'created_by', 'creator', 'creator_id', 'created_by_id',
+                                'owner_id', 'record_creator', 'record_creator_organisation'
+                            ]
+                            for cf in creator_fields:
+                                try:
+                                    if item_data.get(cf) == entity_id:
+                                        entity_ids.add((item_id, 'created_by'))
+                                        break
+                                except Exception:
+                                    pass
+
+                            # associations object on templates (if present)
+                            tpl_assoc = item_data.get('associations', {})
+                            if isinstance(tpl_assoc, dict):
+                                for k, v in tpl_assoc.items():
+                                    if v == entity_id:
+                                        entity_ids.add((item_id, 'created_by'))
+                                        break
+
+                            # user_metadata may contain references to the creator
+                            um = item_data.get('user_metadata') or {}
+                            if isinstance(um, dict):
+                                for v in um.values():
+                                    if v == entity_id:
+                                        entity_ids.add((item_id, 'created_by'))
+                                        break
                         
                         elif root_subtype == "ORGANISATION":
                             # Check MODEL_RUN associations
@@ -1341,129 +1388,6 @@ async def find_related_entities(
         return {"status": "error", "message": str(e)}
 
 
-@mcp.tool()
-async def get_entity_associations(
-    ctx: Context,
-    entity_id: str
-) -> Dict[str, Any]:
-    """
-    Get direct associations (people, organizations, related IDs) for an entity.
-    Returns lightweight association information without full entity details.
-    
-    Perfect for queries like:
-    - "Who created this dataset?"
-    - "What organization owns this?"
-    - "Who ran this model?"
-    - "What's the workflow template for this model run?"
-    
-    Args:
-        entity_id: The entity to get associations for
-    
-    Returns:
-        Dictionary of associations with IDs and optional resolved names
-    """
-    client = await require_authentication(ctx)
-    if not client:
-        return {"status": "error", "message": "Authentication required"}
-    
-    try:
-        await ctx.info(f"Fetching associations for {entity_id}")
-        
-        result = await client.registry.general_fetch_item(id=entity_id)
-        if not result.status.success:
-            return {"status": "error", "message": result.status.details}
-        
-        entity = _dump(result.item)
-        entity_subtype = entity.get('item_subtype', 'UNKNOWN')
-        
-        associations_data = {
-            "entity_id": entity_id,
-            "entity_type": entity_subtype,
-            "entity_name": entity.get('display_name', 'N/A'),
-            "associations": {}
-        }
-        
-        # Extract associations based on entity type
-        if entity_subtype == "DATASET":
-            cf = entity.get('collection_format', {})
-            ds_info = cf.get('dataset_info', {})
-            assoc = cf.get('associations', {})
-            
-            associations_data["associations"] = {
-                "publisher_id": ds_info.get('publisher_id'),
-                "organisation_id": assoc.get('organisation_id'),
-                "data_custodian_id": assoc.get('data_custodian_id'),
-                "point_of_contact": assoc.get('point_of_contact')
-            }
-            
-        elif entity_subtype == "MODEL_RUN":
-            associations_data["associations"] = {
-                "workflow_template_id": entity.get('workflow_template_id'),
-                "modeller_id": entity.get('associations', {}).get('modeller_id'),
-                "requesting_organisation_id": entity.get('associations', {}).get('requesting_organisation_id'),
-                "study_id": entity.get('study_id'),
-                "model_version": entity.get('model_version')
-            }
-            
-        elif entity_subtype == "MODEL_RUN_WORKFLOW_TEMPLATE":
-            associations_data["associations"] = {
-                "software_id": entity.get('software_id'),
-                "input_template_count": len(entity.get('input_templates', [])),
-                "output_template_count": len(entity.get('output_templates', []))
-            }
-            
-        elif entity_subtype == "PERSON":
-            associations_data["associations"] = {
-                "email": entity.get('email'),
-                "orcid": entity.get('orcid'),
-                "ethics_approved": entity.get('ethics_approved')
-            }
-            
-        elif entity_subtype == "ORGANISATION":
-            associations_data["associations"] = {
-                "name": entity.get('name'),
-                "ror": entity.get('ror')
-            }
-            
-        elif entity_subtype == "MODEL":
-            associations_data["associations"] = {
-                "name": entity.get('name'),
-                "documentation_url": entity.get('documentation_url'),
-                "source_url": entity.get('source_url')
-            }
-        
-        # Resolve names for ID fields
-        await ctx.info("Resolving association names...")
-        resolved = {}
-        
-        for key, value in associations_data["associations"].items():
-            if value and isinstance(value, str) and '/' in value and key.endswith('_id'):
-                try:
-                    assoc_result = await client.registry.general_fetch_item(id=value)
-                    if assoc_result.status.success:
-                        assoc_entity = _dump(assoc_result.item)
-                        resolved[key] = {
-                            "id": value,
-                            "handle_url": f"https://hdl.handle.net/{value}",
-                            "name": assoc_entity.get('display_name', 'N/A'),
-                            "type": assoc_entity.get('item_subtype', 'UNKNOWN')
-                        }
-                except Exception:
-                    resolved[key] = {"id": value, "name": "Failed to resolve"}
-            else:
-                resolved[key] = value
-        
-        associations_data["resolved_associations"] = resolved
-        associations_data["status"] = "success"
-        
-        await ctx.info(f"Retrieved associations for {entity_subtype}")
-        
-        return associations_data
-        
-    except Exception as e:
-        await ctx.error(f"Failed to get associations: {str(e)}")
-        return {"status": "error", "message": str(e)}
-
 
 @mcp.tool()
 async def create_model(
@@ -1478,6 +1402,8 @@ async def create_model(
     """
     Register a new Model in the Provena registry.
     
+    - Use the register_entity_workflow prompt for detailed guidance on gathering information.
+
     IMPORTANT WORKFLOW - Follow this exact process:
     1. Ask user for EACH field conversationally, one by one
     2. Show complete summary of ALL collected information
@@ -1558,7 +1484,9 @@ async def create_dataset_template(
 ) -> Dict[str, Any]:
     """
     Register a new Dataset Template in the Provena registry.
-    
+
+    - Use the dataset_template_workflow prompt for detailed guidance on gathering information. 
+
     Dataset templates define the structure/schema for datasets used in model runs.
     They specify what files/resources are expected in a dataset.
     
@@ -1571,7 +1499,7 @@ async def create_dataset_template(
     REQUIRED FIELDS:
     - display_name: Name for this template
 
-    OPTIONAL FIELDS:
+    OPTIONAL FIELDS (ALWAYS ASK FOR THESE TOO):
     - description: Description of what this template is for
     - defined_resources: JSON string array of defined resources. Each resource should have:
         * path: File path within dataset
@@ -1689,6 +1617,8 @@ async def create_model_run_workflow_template(
     """
     Register a new Model Run Workflow Template in the Provena registry.
     
+    - Use the workflow_template_registration prompt for detailed guidance on gathering information.
+
     Model run workflow templates define the inputs, outputs, and annotations required
     for registering model runs. They act as blueprints for model run activities.
 
@@ -1696,7 +1626,7 @@ async def create_model_run_workflow_template(
     - display_name: User-friendly name for this workflow template (e.g., "Simple Coral Model v1.5 Workflow")
     - model_id: The ID of a registered Model entity that this workflow template is for
 
-    OPTIONAL FIELDS:
+    OPTIONAL FIELDS (ALWAYS ASK FOR THESE TOO):
     - input_template_ids: JSON string array of input dataset template IDs with optional flags
     
     - output_template_ids: JSON string array of output dataset template IDs with optional flags
@@ -1860,6 +1790,8 @@ async def create_dataset(
 ) -> Dict[str, Any]:
     """
     Register a new dataset in the Provena registry.
+
+    - Use the dataset_registration_workflow prompt for detailed guidance on gathering information.
 
     IMPORTANT WORKFLOW - Follow this exact process:
     1. Ask user for EACH AND EVERY field conversationally, one by one in the order listed below (mention if it is optional)
@@ -2155,9 +2087,9 @@ async def create_person(
         
         return {
             "status": "success",
-            "organisation_id": result.created_item.id,
-            "message": f"Organisation registered successfully",
-            "handle_url": f"https://hdl.handle.net/{result.created_item.id}" if result.created_item.id else None
+            "person_id": created_id,
+            "message": f"Person '{final_display_name}' registered successfully",
+            "handle_url": f"https://hdl.handle.net/{created_id}" if created_id else None
         }
     
     except ValidationError as ve:
@@ -2253,6 +2185,8 @@ async def create_model_run(
     """
     Register a model run activity that documents an actual execution of a model.
     DO NOT USE UNTIL THE USER HAS PROVIDED ALL REQUIRED INFORMATION AND CONFIRMED. Use the prompt register_workflow to guide the user.
+
+    - Use the model_run_registration prompt for detailed guidance on gathering information.
 
     IMPORTANT WORKFLOW - Follow this exact process:
     1. Ask user for EACH field conversationally, one by one - ENSURE YOU ASK TO COLLECT INFORMATION FOR EVERY SINGLE FIELD, INCLUDING THE OPTIONAL ONES
