@@ -67,36 +67,6 @@ If not set, defaults to `gpt-4o-mini`.
 ## .gitignore
 Sensitive and temp files are ignored by default (see `.gitignore`).
 
-## POC Development Checklist
-
-- [x] **Set up remote MCP server foundations**  
-  Create basic structure for the server, tooling interfaces, and plugin registration.
-
-- [x] **Define basic tool definitions**  
-  Implement 'mock' `get_record`, `search_data`, `create_record`, `modify_record` tools.
-
-- [x] **Create Terminal based MCP Client chatbot**  
-
-- [x] **Implement authentication using third-party authorization flow**  
-      Handle token acquisition and attach credentials to tool requests securely.
-    - [x] Confirm Provena supports OAuth 2.0 (Authorization Code Flow)
-    - [x] Register the MCP Server as an OAuth Client in Provena
-    - [x] Implement OAuth Authorization Code Flow in MCP Server
-
-- [x] **Connect MCP server tools to real Provena API endpoints**  
-      Begin with read operations, then expand to write/update.
-    - [x] Implement `get_record`
-    - [x] Implement `search_data`
-    - [x] Implement `create_record`
-    - [x] Implement `modify_record`
-          
-- [x] **Validate full conversational flow**  
-  User → Claude → MCP client → server tools → Provena API → useful response → back to user.
-
-- [x] **Evaluate UX: Is it actually simpler and more efficient?**  
-  Compare time and steps to complete a task via:
-  - Traditional Provena UI
-  - Conversational AI + MCP tools
 
 ## Overview of Flow
 ```mermaid
