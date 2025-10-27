@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import asyncio
 from dotenv import load_dotenv
@@ -7,7 +8,10 @@ from fastmcp import Client
 
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-MODEL = "gpt-5-mini"
+MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")  # Default to gpt-4o-mini if not set
+
+# Debug mode flag - set to True if 'dev' is in arguments
+DEBUG_MODE = "dev" in sys.argv
 
 def requires_confirmation(tool_name: str) -> bool:
     """Any tool beginning with 'create' requires confirmation."""
@@ -75,34 +79,35 @@ async def ai_chat_loop():
         tools = await client.list_tools()
         prompts = await client.list_prompts()
         
-        tool_names = [t.name for t in tools]
-        prompt_names = [p.name for p in prompts]
-        
-        print("Available Tools:", tool_names)
-        print("Available Prompts:", prompt_names)
+        # Minimal startup message only
+        print(f"Provena MCP Chat Client started.")
+        if DEBUG_MODE:
+            print(f"Using OpenAI model: {MODEL}")
 
         # Convert tools to OpenAI format
         openai_tools = []
         for t in tools:
-            openai_tools.append({
+            tool_def = {
                 "type": "function",
                 "function": {
                     "name": t.name,
                     "description": t.description or "",
                     "parameters": safe_get_parameters(t)
                 }
-            })
+            }
+            openai_tools.append(tool_def)
 
         # Add prompt tools (prompts become callable functions)
         for p in prompts:
-            openai_tools.append({
+            prompt_tool = {
                 "type": "function", 
                 "function": {
                     "name": f"get_prompt_{p.name}",
                     "description": f"Get the {p.name} prompt: {p.description or ''}",
                     "parameters": safe_get_parameters(p)
                 }
-            })
+            }
+            openai_tools.append(prompt_tool)
 
         openai_client = OpenAI(api_key=OPENAI_API_KEY)
         messages = [{
@@ -117,14 +122,14 @@ async def ai_chat_loop():
             )
         }]
 
-        print("\nChat started! Commands: 'quit', 'exit'")
-        print("Ask me anything about Provena data!\n")
+        mode_indicator = " [DEBUG MODE]" if DEBUG_MODE else ""
+        print(f"\nChat started!{mode_indicator}")
+        if DEBUG_MODE:
+            print("Debug mode is ON - showing detailed tool call info")
+        print("Type your question. Use Ctrl+C to exit.\n")
 
         while True:
             prompt = input("You: ").strip()
-            if prompt.lower() in ("quit", "exit"):
-                break
-
             messages.append({"role": "user", "content": prompt})
 
             try:
@@ -152,7 +157,13 @@ async def ai_chat_loop():
                                 args = json.loads(tool_call.function.arguments or "{}")
                             except Exception:
                                 args = {}
-                            print(f"[Calling: {tool_name}({args})]")
+                            
+                            # Show tool call - detailed in debug mode, minimal otherwise
+                            if DEBUG_MODE:
+                                print(f"\n[Calling: {tool_name}]")
+                                print(f"Arguments: {json.dumps(args, indent=2)}")
+                            else:
+                                print(f"→ {tool_name}")
 
                             try:
                                 # Check if this is a prompt call
@@ -160,7 +171,9 @@ async def ai_chat_loop():
                                     prompt_name = tool_name.replace("get_prompt_", "")
                                     result = await client.get_prompt(prompt_name, args)
                                     prompt_content = extract_prompt_result(result)
-                                    print(f"[{tool_name} result]: {prompt_content}")
+                                    
+                                    if DEBUG_MODE:
+                                        print(f"[{tool_name} result]: {prompt_content}")
                                     
                                     # Add the prompt content as a tool response
                                     messages.append({
@@ -192,7 +205,9 @@ async def ai_chat_loop():
                                     result = await client.call_tool(tool_name, args)
                                     data = extract_tool_result(result)
                                     result_text = json.dumps(data, indent=2)
-                                    print(f"[{tool_name} result]: {result_text}")
+                                    
+                                    if DEBUG_MODE:
+                                        print(f"[{tool_name} result]: {result_text}")
 
                                     messages.append({
                                         "role": "tool",
@@ -201,7 +216,10 @@ async def ai_chat_loop():
                                     })
                             except Exception as e:
                                 error_msg = {"status": "error", "message": str(e)}
-                                print(f"Tool error: {error_msg}")
+                                if DEBUG_MODE:
+                                    print(f"Tool error: {error_msg}")
+                                else:
+                                    print(f"✗ Error in {tool_name}: {str(e)}")
                                 messages.append({
                                     "role": "tool",
                                     "tool_call_id": tool_call.id,
