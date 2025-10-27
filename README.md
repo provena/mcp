@@ -46,7 +46,7 @@ This POC validates the technical feasibility of using AI to reduce metadata mana
 python server/provena_mcp_server.py --http
 ```
 
-**Start the MCP client** (from the `mcp` folder):
+**Start the MCP client** (from the `mcp` folder, in another terminal):
 ```sh
 python client/mcp_client.py
 ```
