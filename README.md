@@ -80,6 +80,15 @@ Sensitive and temp files are ignored by default (see `.gitignore`).
 
 See the `examples/` folder for sample conversations and workflows you can try with the MCP client.
 
+## How to Use / Interaction Tips
+
+- You can interact step-by-step, asking questions or providing information as prompted by the AI.
+- If you already know all the details needed for a workflow, you can paste everything at once—the LLM will understand, format, and make the appropriate API calls for you.
+- The LLM can guide you through complex workflows, fill in missing information, and handle multi-step tasks automatically.
+- You can ask the AI for available tools, prompts, or help at any time.
+- Use debug mode (`python client/mcp_client.py dev`) to see detailed info about tool calls and API responses.
+- See the `examples/` folder for sample conversations and workflows.
+
 ## Directory Structure
 
 ```
