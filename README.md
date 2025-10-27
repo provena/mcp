@@ -21,37 +21,48 @@ This POC validates the technical feasibility of using AI to reduce metadata mana
 ## Setup
 
 1. **Clone the repo**
+  ```sh
+  git clone https://github.com/provena/mcp.git
+  cd mcp
+  ```
 2. **Create a virtual environment:**
-   ```sh
-   python3 -m venv venv
-   source venv/bin/activate
-   ```
-3. **Install dependencies** (there are some version mismatching that need to be manually upgraded):
-   ```sh
-   pip install .
-   pip install --upgrade cloudpathlib
-   pip install --upgrade fastmcp
-   ```
-4. **Set environment variables**:
-   - Set the .env.example to .env and put in your openai api key
+  ```sh
+  python -m venv venv
+  source venv/bin/activate
+  ```
+3. **Install dependencies:**
+  ```sh
+  pip install .
+  pip install --upgrade cloudpathlib fastmcp
+  ```
+4. **Set environment variables:**
+  - Copy `.env.example` to `.env` and fill in your OpenAI API key.
+  - You can also set the OpenAI model in `.env` (see below).
 
 ## Usage
 
-- Start the server:
-  ```sh
-  python provena_mcp_server.py --http
-  ```
-- Use the provided mcp client to interact with the server (must provide OpenAI API key in .env to use.
-  ```sh
-  python mcp_client.py
-  ```
--  Test using the tools in the MCP Server via talking to the MCP Client
--  For example, use the login tool to which will open the browser and prompt user login to provide the server with the access token
+**Start the MCP server** (from the `mcp` folder):
+```sh
+python server/provena_mcp_server.py --http
+```
 
-## Security
-- Tokens are stored in your OS keyring (see the `keyring` Python package docs for details).
-- No `.tokens.json`, `.enc`, or `.key` files are committed or needed.
-- On logout, any temp files created by the Provena client are deleted automatically.
+**Start the MCP client** (from the `mcp` folder):
+```sh
+python client/mcp_client.py
+```
+
+**Debug mode:**
+To show detailed info about tool calls and API responses (JSON dumps, etc.), run:
+```sh
+python client/mcp_client.py dev
+```
+
+**Model selection:**
+Set the model in your `.env` file:
+```
+OPENAI_MODEL=gpt-4o-mini
+```
+If not set, defaults to `gpt-4o-mini`.
 
 ## .gitignore
 Sensitive and temp files are ignored by default (see `.gitignore`).
