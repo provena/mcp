@@ -67,6 +67,33 @@ If not set, defaults to `gpt-4o-mini`.
 ## .gitignore
 Sensitive and temp files are ignored by default (see `.gitignore`).
 
+## Features & Capabilities
+
+- Conversational AI interface for Provena using LLMs and MCP tools
+- Search, create, and modify Provena records via natural language
+- Authentication via OAuth (browser-based flow)
+- Configurable OpenAI model via `.env`
+- Debug mode for detailed tool call and API response inspection
+- Extensible tool and prompt system (add new workflows easily)
+
+## Example Interactions
+
+See the `examples/` folder for sample conversations and workflows you can try with the MCP client.
+
+## Directory Structure
+
+```
+mcp/
+├── client/
+│   └── mcp_client.py         # Conversational AI client
+├── server/
+│   └── provena_mcp_server.py # MCP server exposing Provena tools
+├── examples/                 # Example conversations and workflows
+├── tests/                    # Test scripts
+├── .env.example              # Example environment config
+├── README.md                 # Main documentation
+└── ...other files
+```
 
 ## Overview of Flow
 ```mermaid
