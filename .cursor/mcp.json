@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "provena": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["${workspaceFolder}/server/provena_mcp_server.py"],
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env"
+    }
+  }
+}
