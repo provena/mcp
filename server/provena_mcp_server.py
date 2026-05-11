@@ -5,31 +5,49 @@ The file is intentionally conservative about behaviour changes: edits here
 are limited to small quality / typing fixes and correctness adjustments.
 """
 
-import sys
-import os
-import asyncio
 import json
-from typing import Optional, Dict, Any, Tuple
+import os
+import sys
+from pathlib import Path
+from typing import Any, Dict, Optional, Tuple, Union
+
+
+def _load_repo_dotenv() -> None:
+    """Load ``.env`` from the repository root so ``PROVENA_*`` and other vars apply.
+
+    Skipped when ``PROVENA_MCP_NO_DOTENV=1`` (used by pytest). Existing OS environment
+    variables take precedence over entries in ``.env`` (``override=False``).
+    """
+    if os.environ.get("PROVENA_MCP_NO_DOTENV") == "1":
+        return
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return
+    repo_root = Path(__file__).resolve().parent.parent
+    load_dotenv(repo_root / ".env", override=False)
+
+
+_load_repo_dotenv()
+
+import asyncio
 
 from fastmcp import FastMCP, Context
 from provenaclient import ProvenaClient, Config
 from provenaclient.auth import DeviceFlow
+from provenaclient.auth.implementations import OfflineFlow
 from provenaclient.auth.manager import Log
 from provenaclient.utils.config import APIOverrides
 
-DOMAIN = os.getenv("PROVENA_DOMAIN", "dev.rrap-is.com")
-REALM = os.getenv("PROVENA_REALM", "rrap")
-CLIENT_ID = os.getenv("MCP_CLIENT_ID", "mcp-client")
+from server import provena_runtime as pr
 
-API_OVERRIDES = APIOverrides(
-    datastore_api_endpoint_override=os.getenv("DATASTORE_API", "https://data-api.dev.rrap-is.com"),
-    registry_api_endpoint_override=os.getenv("REGISTRY_API", "https://registry-api.dev.rrap-is.com"),
-    prov_api_endpoint_override=os.getenv("PROV_API", "https://prov-api.dev.rrap-is.com"),
-    search_api_endpoint_override=os.getenv("SEARCH_API", "https://search.dev.rrap-is.com"),
-    search_service_endpoint_override=os.getenv("SEARCH_SERVICE", "https://search.dev.rrap-is.com"),
-    handle_service_api_endpoint_override=os.getenv("HANDLE_SERVICE", "https://handle.dev.rrap-is.com"),
-    jobs_service_api_endpoint_override=os.getenv("JOBS_SERVICE", "https://job-api.dev.rrap-is.com"),
-)
+_INIT_CFG = pr.get_provena_config()
+DOMAIN = str(_INIT_CFG.get("domain") or os.getenv("PROVENA_DOMAIN", "dev.rrap-is.com"))
+REALM = str(_INIT_CFG.get("realm") or os.getenv("PROVENA_REALM", "rrap"))
+CLIENT_ID = os.getenv("MCP_CLIENT_ID", "mcp-client")
+OFFLINE_CLIENT_ID = os.getenv("MCP_OFFLINE_CLIENT_ID", "automated-access")
+
+API_OVERRIDES = pr.build_api_overrides_for_config(_INIT_CFG)
 
 mcp = FastMCP("ProvenaConnector")
 
@@ -73,17 +91,53 @@ Adjust depth parameter (1-5) based on how deep to trace lineage. Default 3 is ba
 
 
 class ProvenaAuthManager:
-    """Manages authentication state and Provena client connections"""
-    
-    def __init__(self):
-        self.config = Config(
-            domain=DOMAIN, 
-            realm_name=REALM,
-            api_overrides=API_OVERRIDES
-        )
+    """Manages authentication state and Provena client connections (device or offline token)."""
+
+    def __init__(self) -> None:
+        self.config: Config = Config(domain=DOMAIN, realm_name=REALM, api_overrides=API_OVERRIDES)
         self._client: Optional[ProvenaClient] = None
-        self._auth: Optional[DeviceFlow] = None
-    
+        self._auth: Optional[Union[DeviceFlow, OfflineFlow]] = None
+        self._cached_offline_token: Optional[str] = None
+
+    def reload_connection_settings(self) -> Dict[str, Any]:
+        """Refresh ``Config`` from ``provena_runtime`` (instance file, env, tokens)."""
+        cfg = pr.get_provena_config()
+        api_ov = pr.build_api_overrides_for_config(cfg)
+        domain = str(cfg.get("domain") or DOMAIN)
+        realm = str(cfg.get("realm") or REALM)
+        self.config = Config(domain=domain, realm_name=realm, api_overrides=api_ov)
+        return cfg
+
+    def _has_offline_token(self, cfg: Optional[Dict[str, Any]] = None) -> bool:
+        c = cfg if cfg is not None else pr.get_provena_config()
+        return bool((c.get("token") or "").strip())
+
+    def _ensure_offline_auth(self) -> bool:
+        """Create or refresh ``OfflineFlow`` when an offline token is configured."""
+        cfg = self.reload_connection_settings()
+        token = (cfg.get("token") or "").strip()
+        if not token:
+            self._cached_offline_token = None
+            return False
+        if self._cached_offline_token == token and self._auth is not None and self._get_access_token():
+            return True
+        self._client = None
+        self._auth = None
+        try:
+            self._auth = OfflineFlow(
+                config=self.config,
+                client_id=OFFLINE_CLIENT_ID,
+                offline_token=token,
+                log_level=Log.ERROR,
+            )
+            self._cached_offline_token = token
+            return True
+        except Exception as e:
+            print(f"Offline authentication failed: {e}")
+            self._auth = None
+            self._cached_offline_token = None
+            return False
+
     def _get_access_token(self) -> Optional[str]:
         """Safely extract an access token string from the auth tokens if available."""
         if not self._auth or not hasattr(self._auth, "tokens"):
@@ -99,67 +153,100 @@ class ProvenaAuthManager:
             return None
 
     def _is_authenticated(self) -> bool:
-        """Check if we have a usable access token (non-empty, JWT-like)."""
+        """True if we have a usable access token (JWT-shaped) after device or offline flow."""
         access = self._get_access_token()
         return bool(access) and access.count(".") == 2
-    
+
+    def auth_mode(self) -> str:
+        """``offline`` | ``device`` | ``none``."""
+        if self._has_offline_token():
+            return "offline" if self._ensure_offline_auth() and self._is_authenticated() else "offline_invalid"
+        if self._is_authenticated():
+            return "device"
+        return "none"
+
     async def authenticate(self) -> Dict[str, Any]:
-        """Handle authentication (login)"""
+        """Device flow login, or validate offline token if configured."""
         try:
+            cfg = self.reload_connection_settings()
+            if self._has_offline_token(cfg):
+                ok = self._ensure_offline_auth()
+                if ok and self._is_authenticated():
+                    return {
+                        "status": "already_authenticated",
+                        "message": "Using offline token (provena_tokens.json or PROVENA_OFFLINE_TOKEN)",
+                        "mode": "offline",
+                        "instance": cfg.get("instance"),
+                    }
+                return {
+                    "status": "error",
+                    "error": "Offline token invalid, expired, or could not be exchanged",
+                    "mode": "offline",
+                    "instance": cfg.get("instance"),
+                }
+
             if self._is_authenticated():
-                return {"status": "already_authenticated", "message": "Already authenticated"}
-            
+                return {"status": "already_authenticated", "message": "Already authenticated", "mode": "device"}
+
             self._client = None
             self._auth = None
-            
+            self._cached_offline_token = None
+
             self._auth = DeviceFlow(
                 config=self.config,
                 client_id=CLIENT_ID,
-                log_level=Log.ERROR
+                log_level=Log.ERROR,
             )
-            
+
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, self._auth.start_device_flow)
-            
+
             if self._is_authenticated():
                 return {
                     "status": "authenticated",
-                    "message": "Authentication completed successfully"
+                    "message": "Authentication completed successfully",
+                    "mode": "device",
                 }
-            else:
-                return {
-                    "status": "error",
-                    "error": "Device flow completed but no tokens were received"
-                }
-            
+            return {
+                "status": "error",
+                "error": "Device flow completed but no tokens were received",
+                "mode": "device",
+            }
+
         except Exception as e:
             return {"status": "error", "error": str(e)}
-    
+
     def get_client(self) -> Optional[ProvenaClient]:
-        """Get authenticated Provena client"""
-        if not self._is_authenticated():
+        """Return an authenticated ``ProvenaClient`` (offline token takes precedence over device)."""
+        if self._has_offline_token():
+            if not self._ensure_offline_auth() or not self._is_authenticated():
+                return None
+        elif not self._is_authenticated():
             return None
-        
+
         if not self._client:
             try:
                 self._client = ProvenaClient(config=self.config, auth=self._auth)
             except Exception as e:
                 print(f"Failed to create Provena client: {e}")
                 self._auth = None
+                self._client = None
+                self._cached_offline_token = None
                 return None
-        
+
         return self._client
-    
-    def logout(self):
-        """Clear all authentication state"""
-        if self._auth and hasattr(self._auth, 'file_name') and os.path.exists(self._auth.file_name):
+
+    def logout(self) -> None:
+        """Clear in-memory auth. Removes device-flow token file when present."""
+        if self._auth and hasattr(self._auth, "file_name") and os.path.exists(self._auth.file_name):
             try:
                 os.remove(self._auth.file_name)
             except Exception:
                 pass
-        
+
         self._client = None
         self._auth = None
+        self._cached_offline_token = None
 
 auth_manager = ProvenaAuthManager()
 
@@ -179,16 +266,63 @@ def _dump(obj):
 
 @mcp.tool()
 async def check_authentication_status(ctx: Context) -> Dict[str, Any]:
-    """Check current authentication status with Provena."""
+    """Check current authentication status with Provena (device or offline token)."""
+    cfg = auth_manager.reload_connection_settings()
+    mode = auth_manager.auth_mode()
     is_authenticated = auth_manager._is_authenticated()
-    
-    status = {
+
+    if mode == "offline_invalid":
+        message = "Offline token configured but invalid or expired — check provena_tokens.json or PROVENA_OFFLINE_TOKEN"
+    elif is_authenticated:
+        message = (
+            "Authenticated with offline token"
+            if mode == "offline"
+            else "Authenticated and ready (device flow)"
+        )
+    else:
+        message = "Not authenticated — use login_to_provena or add an offline token (see get_provena_offline_token_instructions)"
+
+    status: Dict[str, Any] = {
         "authenticated": is_authenticated,
-        "message": "Authenticated and ready" if is_authenticated else "Not authenticated - use login_to_provena"
+        "mode": mode,
+        "instance": cfg.get("instance"),
+        "message": message,
     }
-    
+
     await ctx.info(status["message"])
     return status
+
+
+@mcp.tool()
+async def list_provena_instances(ctx: Context) -> Dict[str, Any]:
+    """List Provena instances from provena_instances.json with token presence (no secret values)."""
+    await ctx.info("Listing Provena instances from configuration")
+    return pr.list_provena_instances()
+
+
+@mcp.tool()
+async def get_provena_offline_token_instructions(ctx: Context) -> Dict[str, Any]:
+    """How to obtain and save an offline refresh token for headless or non-interactive MCP use."""
+    await ctx.info("Returning offline token setup instructions")
+    return pr.offline_token_instructions()
+
+
+@mcp.tool()
+async def get_provena_connection_info(ctx: Context) -> Dict[str, Any]:
+    """Resolved connection summary: domain, realm, instance, auth mode (no tokens)."""
+    cfg = auth_manager.reload_connection_settings()
+    mode = auth_manager.auth_mode()
+    paths = pr.list_provena_instances()
+    await ctx.info("Resolved Provena connection settings")
+    return {
+        "domain": cfg.get("domain"),
+        "realm": cfg.get("realm"),
+        "instance": cfg.get("instance"),
+        "auth_mode": mode,
+        "has_offline_token_configured": bool((cfg.get("token") or "").strip()),
+        "config_file": paths.get("config_file"),
+        "tokens_file": paths.get("tokens_file"),
+    }
 
 @mcp.prompt("handle_linking")
 def handle_linking_prompt() -> str:
@@ -573,7 +707,7 @@ async def login_to_provena(ctx: Context) -> Dict[str, Any]:
     if auth_result["status"] == "authenticated":
         await ctx.info("Authentication completed successfully!")
     elif auth_result["status"] == "already_authenticated":
-        await ctx.info("Already authenticated")
+        await ctx.info(auth_result.get("message", "Already authenticated"))
     else:
         await ctx.error(f"Authentication failed: {auth_result.get('error', 'Unknown error')}")
     
@@ -581,7 +715,12 @@ async def login_to_provena(ctx: Context) -> Dict[str, Any]:
 
 @mcp.tool()
 async def logout_from_provena(ctx: Context) -> Dict[str, str]:
-    """Logout from Provena and clear authentication state."""
+    """Logout from Provena and clear in-memory authentication.
+
+    Removes the device-flow token cache file when used. If an offline token is still
+    present in ``provena_tokens.json`` or ``PROVENA_OFFLINE_TOKEN``, the next API call
+    will authenticate again using that token until you remove it or unset the env var.
+    """
     auth_manager.logout()
     await ctx.info("Logged out from Provena")
     return {"message": "Logged out successfully"}
@@ -590,7 +729,10 @@ async def require_authentication(ctx: Context) -> Optional[ProvenaClient]:
     """Helper to ensure authentication and return client"""
     client = auth_manager.get_client()
     if not client:
-        await ctx.error("Authentication required. Use login_to_provena first.")
+        await ctx.error(
+            "Authentication required. Use login_to_provena, or configure an offline token "
+            "(provena_tokens.json / PROVENA_OFFLINE_TOKEN — see get_provena_offline_token_instructions)."
+        )
         return None
     return client
 
@@ -1756,7 +1898,7 @@ async def create_dataset(
     published_date: str,
     license: str,
     # Access info components
-    access_reposited: bool = True,
+    access_reposited: bool = False,
     access_uri: Optional[str] = None,
     access_description: Optional[str] = None,
     # Ethics/approval boolean fields
@@ -1810,10 +1952,10 @@ async def create_dataset(
     - published_date: user can provide in any common format, convert to YYYY-MM-DD format
     - license: License URI (e.g., https://creativecommons.org/licenses/by/4.0/)
 
-    ACCESS INFORMATION FIELDS (ensure you ask about these - if reposited is False, you must ask for URI and description, otherwise skip them if reposited is True)
-    - access_reposited: Is the data reposited? 
-    - access_uri: URI if externally hosted (optional - skip if access_reposited is True)
-    - access_description: How to access externally hosted data (optional - skip if access_reposited is True)
+    ACCESS INFORMATION FIELDS (default: not reposited — ask for URI and description unless user opts into reposited)
+    - access_reposited: Is the data reposited in Provena storage? (default False)
+    - access_uri: Required when access_reposited is False — URI to access externally hosted data
+    - access_description: Required when access_reposited is False — how to access that data
 
     APPROVALS FIELDS (booleans for true or false)
     - ethics_registration_relevant, ethics_registration_obtained (if not relevant, obtained is false, and you do not need to ask)
@@ -1866,7 +2008,19 @@ async def create_dataset(
         )
         
         await ctx.info(f"Registering dataset '{name}'...")
-        
+
+        if not access_reposited:
+            if not access_uri or not str(access_uri).strip():
+                return {
+                    "status": "error",
+                    "message": "When access_reposited is false, access_uri is required (link or URI to the externally hosted data).",
+                }
+            if not access_description or not str(access_description).strip():
+                return {
+                    "status": "error",
+                    "message": "When access_reposited is false, access_description is required (how to access the externally hosted data).",
+                }
+
         access_info = AccessInfo(
             reposited=access_reposited,
             uri=access_uri,
@@ -2456,6 +2610,8 @@ async def create_model_run(
 
 if __name__ == "__main__":
     if "--http" in sys.argv:
-        mcp.run(transport="sse", host="127.0.0.1", port=5000)
+        _host = os.environ.get("MCP_HTTP_HOST", "127.0.0.1")
+        _port = int(os.environ.get("MCP_HTTP_PORT", "5000"))
+        mcp.run(transport="sse", host=_host, port=_port)
     else:
         mcp.run()
