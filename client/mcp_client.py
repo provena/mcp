@@ -74,7 +74,8 @@ async def check_auth_status(client):
         return False
 
 async def ai_chat_loop():
-    async with Client("http://127.0.0.1:5000/sse") as client:
+    _mcp_http = os.environ.get("PROVENA_MCP_HTTP_URL", "http://127.0.0.1:5000/mcp")
+    async with Client(_mcp_http) as client:
         # Get both tools and prompts
         tools = await client.list_tools()
         prompts = await client.list_prompts()

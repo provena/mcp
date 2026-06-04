@@ -2612,6 +2612,27 @@ if __name__ == "__main__":
     if "--http" in sys.argv:
         _host = os.environ.get("MCP_HTTP_HOST", "127.0.0.1")
         _port = int(os.environ.get("MCP_HTTP_PORT", "5000"))
-        mcp.run(transport="sse", host=_host, port=_port)
+        _path = os.environ.get("MCP_HTTP_PATH", "/mcp")
+        # Prefer MCP Streamable HTTP (default path /mcp). Requires FastMCP >= ~2.12 and
+        # httpx>=0.28.1; provenaclient 0.29.1 still pins httpx<0.28, so a plain `pip install .`
+        # often resolves to older FastMCP — then we fall back to legacy SSE on /sse.
+        try:
+            mcp.run(
+                transport="streamable-http",
+                host=_host,
+                port=_port,
+                path=_path,
+            )
+        except (TypeError, ValueError):
+            if hasattr(mcp, "settings"):
+                mcp.settings.host = _host
+                mcp.settings.port = _port
+            print(
+                "provena-mcp: Streamable HTTP unavailable with this FastMCP/httpx stack; "
+                "using legacy SSE at /sse. For /mcp (Streamable HTTP), upgrade fastmcp and "
+                "httpx (see README; Docker image installs a compatible set).",
+                file=sys.stderr,
+            )
+            mcp.run(transport="sse")
     else:
         mcp.run()

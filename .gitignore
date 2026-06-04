@@ -9,7 +9,12 @@ venv/
 # Provena/legacy token files (should not be used, but just in case)
 provena.key
 provena_tokens.enc
+provena_tokens.json
+*instances.json
+provena_instances.json
+
 .tokens.json
+
 tokens.json
 
 # dotenv
