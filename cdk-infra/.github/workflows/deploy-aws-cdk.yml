@@ -1,0 +1,76 @@
+name: CDK Deploy Provena MCP
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Choose action to perform"
+        required: true
+        default: "diff"
+        type: choice
+        options:
+          - deploy
+          - diff
+          - destroy
+      environment:
+        description: "GitHub environment (vars + OIDC role)"
+        required: true
+        default: "dev"
+        type: string
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  cdk:
+    environment: ${{ github.event.inputs.environment }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cdk-infra
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.CDK_DEPLOY_GA_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Prepare Docker build context
+        working-directory: ..
+        run: |
+          cp -f provena_instances.example.json provena_instances.json
+          echo "{}" > provena_tokens.json
+
+      - name: Run CDK
+        env:
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          AWS_HOSTED_ZONE_ID: ${{ vars.AWS_HOSTED_ZONE_ID }}
+          BASE_DOMAIN: ${{ vars.BASE_DOMAIN }}
+          MCP_SUBDOMAIN: ${{ vars.MCP_SUBDOMAIN }}
+          STACK_NAME: ${{ vars.STACK_NAME }}
+          PROVENA_INSTANCE: ${{ vars.PROVENA_INSTANCE }}
+          MCP_CPU: ${{ vars.MCP_CPU }}
+          MCP_MEMORY_MIB: ${{ vars.MCP_MEMORY_MIB }}
+          PROVENA_OFFLINE_TOKEN_SECRET_ARN: ${{ vars.PROVENA_OFFLINE_TOKEN_SECRET_ARN }}
+          OPENAI_API_KEY_SECRET_ARN: ${{ vars.OPENAI_API_KEY_SECRET_ARN }}
+        run: |
+          pnpm config-check
+          if [ "${{ github.event.inputs.action }}" = "deploy" ]; then
+            pnpm exec cdk deploy --require-approval never
+          elif [ "${{ github.event.inputs.action }}" = "destroy" ]; then
+            pnpm exec cdk destroy --force
+          else
+            pnpm exec cdk diff
+          fi

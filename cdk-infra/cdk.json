@@ -1,0 +1,24 @@
+{
+  "app": "npx ts-node --prefer-ts-exts bin/provena-mcp-infra.ts",
+  "watch": {
+    "include": ["**"],
+    "exclude": [
+      "README.md",
+      "cdk*.json",
+      "**/*.d.ts",
+      "**/*.js",
+      "tsconfig.json",
+      "package*.json",
+      "node_modules",
+      "test"
+    ]
+  },
+  "context": {
+    "@aws-cdk/aws-ecs-patterns:secGroupsDisablesImplicitOpenListener": true,
+    "@aws-cdk/core:checkSecretUsage": true,
+    "@aws-cdk/aws-iam:minimizePolicies": true,
+    "@aws-cdk/aws-ec2:ebsDefaultGp3Volume": true,
+    "@aws-cdk/aws-ecs:disableEcsImdsBlocking": true,
+    "@aws-cdk/aws-s3:publicAccessBlockedByDefault": true
+  }
+}

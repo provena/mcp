@@ -148,6 +148,12 @@ OPENAI_MODEL=gpt-4o-mini
 ```
 If not set, defaults to `gpt-4o-mini`.
 
+### AWS (CDK)
+
+Infrastructure for running this MCP as a container in AWS lives under **`cdk-infra/`** (TypeScript CDK, config style aligned with [rrap-cf-aws-infra](https://github.com/gbrrestoration/rrap-cf-aws-infra)). When deployed, the service stays at **`desiredCount = 1`** while the stack exists (no automatic scale-to-zero or weekday schedules).
+
+**Cost control is manual:** whoever deploys the stack should **`cdk destroy`** when the environment is not needed (evenings, weekends, holidays) and **`cdk deploy`** when it is needed again. That stops billable resources such as the load balancer, NAT gateway, and Fargate task. See **`cdk-infra/README.md`** for prerequisites, configuration, secrets, deploy/destroy commands, and the remote MCP URL after deploy.
+
 ## .gitignore
 Sensitive and temp files are ignored by default (see `.gitignore`).
 
@@ -192,6 +198,7 @@ mcp/
 ├── provena_instances.example.json
 ├── provena_tokens.example.json
 ├── .env.example
+├── cdk-infra/                 # AWS CDK (deploy / destroy stack manually)
 ├── README.md
 └── ...
 ```

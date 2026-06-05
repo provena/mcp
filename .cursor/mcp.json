@@ -6,6 +6,9 @@
       "args": ["${workspaceFolder}/server/provena_mcp_server.py"],
       "cwd": "${workspaceFolder}",
       "envFile": "${workspaceFolder}/.env"
+    },
+    "provena-http": {
+      "url": "http://127.0.0.1:5000/mcp"
     }
   }
 }
