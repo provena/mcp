@@ -35,8 +35,50 @@ Do **not** commit real tokens. Prefer `PROVENA_OFFLINE_TOKEN_SECRET_ARN` in `.en
 ```sh
 cd cdk-infra
 pnpm install
+```
+
+### Multi-account dev + prod (recommended)
+
+Dev and prod run in **separate AWS accounts** with **separate domains**:
+
+| | Dev | Prod |
+|---|---|---|
+| Domain | `rrap-is.com` | `mds.gbrrestoration.org` |
+| MCP URL | `https://provena-mcp-dev.rrap-is.com` | `https://provena-mcp.mds.gbrrestoration.org` |
+| Provena | `dev.rrap-is.com` | `mds.gbrrestoration.org` |
+| CDK env file | `cdk-infra/.env.dev` | `cdk-infra/.env.prod` |
+
+From the **repository root**:
+
+```sh
+cp cdk-infra/.env.dev.dist cdk-infra/.env.dev
+cp cdk-infra/.env.prod.dist cdk-infra/.env.prod
+# Fill in prod account ID, MDS hosted zone ID, and secret ARNs
+
+chmod +x scripts/*.sh scripts/lib/*.sh
+
+# Once per account
+./scripts/bootstrap_mcp_aws.sh dev
+./scripts/bootstrap_mcp_aws.sh prod
+
+# Secrets (offline token required; OAuth password for connector gate)
+./scripts/setup_mcp_offline_token_aws.sh dev "$DEV_OFFLINE_TOKEN"
+./scripts/setup_mcp_oauth_password_aws.sh dev
+
+./scripts/setup_mcp_offline_token_aws.sh prod "$PROD_OFFLINE_TOKEN"
+./scripts/setup_mcp_oauth_password_aws.sh prod
+
+# Deploy
+./scripts/deploy_mcp_stack.sh dev deploy
+./scripts/deploy_mcp_stack.sh prod deploy
+```
+
+Override AWS profiles: `MCP_DEV_AWS_PROFILE`, `MCP_PROD_AWS_PROFILE`, or `AWS_PROFILE` per command.
+
+### Single `.env` (legacy)
+
+```sh
 cp .env.dist .env
-# Edit .env with your account, region, domain, and Provena instance key
 pnpm config-check
 ```
 
@@ -63,7 +105,15 @@ The CDK app sets `CDK_DEFAULT_REGION` and `AWS_REGION` from `.env` on startup so
 
 ## Deploy (spin up)
 
-From `cdk-infra/`:
+From the repository root (multi-account):
+
+```sh
+./scripts/deploy_mcp_stack.sh dev diff
+./scripts/deploy_mcp_stack.sh dev deploy
+./scripts/deploy_mcp_stack.sh prod deploy
+```
+
+Or from `cdk-infra/` with a single `.env`:
 
 ```sh
 pnpm config-check
@@ -71,14 +121,18 @@ pnpm exec cdk diff
 pnpm exec cdk deploy
 ```
 
-After deploy, note the **`McpHttpUrl`** output (default: `https://provena-mcp.example.com` with MCP at path `/`) and configure remote MCP clients:
+After deploy, note the **`McpHttpUrl`** output and configure remote MCP clients (see `.cursor/mcp.json.example`):
 
 ```json
 {
   "mcpServers": {
-    "provena": {
+    "provena-dev": {
       "type": "http",
-      "url": "https://provena-mcp.example.com"
+      "url": "https://provena-mcp-dev.rrap-is.com"
+    },
+    "provena-prod": {
+      "type": "http",
+      "url": "https://provena-mcp.mds.gbrrestoration.org"
     }
   }
 }

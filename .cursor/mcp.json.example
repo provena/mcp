@@ -10,9 +10,13 @@
     "provena-http": {
       "url": "http://127.0.0.1:5000/mcp"
     },
-    "provena-remote": {
+    "provena-dev": {
       "type": "http",
-      "url": "https://provena-mcp.rrap-is.com"
+      "url": "https://provena-mcp-dev.rrap-is.com"
+    },
+    "provena-prod": {
+      "type": "http",
+      "url": "https://provena-mcp.mds.gbrrestoration.org"
     }
   }
 }

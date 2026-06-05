@@ -40,6 +40,9 @@ from provenaclient.auth.manager import Log
 from provenaclient.utils.config import APIOverrides
 
 from server import provena_runtime as pr
+from server.mcp_http_auth import build_http_auth_middleware, register_health_route
+from server.mcp_http_oauth import build_oauth_provider, resolve_http_auth_mode
+from server.mcp_oauth_password_gate import register_oauth_password_gate
 
 _INIT_CFG = pr.get_provena_config()
 DOMAIN = str(_INIT_CFG.get("domain") or os.getenv("PROVENA_DOMAIN", "dev.rrap-is.com"))
@@ -49,7 +52,11 @@ OFFLINE_CLIENT_ID = os.getenv("MCP_OFFLINE_CLIENT_ID", "automated-access")
 
 API_OVERRIDES = pr.build_api_overrides_for_config(_INIT_CFG)
 
-mcp = FastMCP("ProvenaConnector")
+_OAUTH_PROVIDER = build_oauth_provider()
+if _OAUTH_PROVIDER is not None:
+    mcp = FastMCP("ProvenaConnector", auth=_OAUTH_PROVIDER)
+else:
+    mcp = FastMCP("ProvenaConnector")
 
 @mcp.prompt("comprehensive_entity_research")
 def comprehensive_entity_research_prompt(entity_id: str, research_focus: str = "general") -> str:
@@ -2613,16 +2620,39 @@ if __name__ == "__main__":
         _host = os.environ.get("MCP_HTTP_HOST", "127.0.0.1")
         _port = int(os.environ.get("MCP_HTTP_PORT", "5000"))
         _path = os.environ.get("MCP_HTTP_PATH", "/mcp")
+        _http_auth_mode = resolve_http_auth_mode()
+        _http_middleware: list[Any] | None = None
+        if _http_auth_mode == "api_key":
+            _http_middleware = build_http_auth_middleware()
+        elif _http_auth_mode == "oauth":
+            _http_middleware = register_oauth_password_gate(mcp)
+        register_health_route(mcp)
+        if _http_auth_mode == "oauth":
+            _oauth_password = os.environ.get("MCP_OAUTH_PASSWORD", "").strip()
+            print(
+                "provena-mcp: OAuth 2.1 enabled (Claude/Cursor). "
+                + ("Password gate enabled on /oauth/gate. " if _oauth_password else "")
+                + "/health remains public.",
+                file=sys.stderr,
+            )
+        elif _http_middleware:
+            print(
+                "provena-mcp: HTTP API key auth enabled (Bearer or X-API-Key). "
+                "/health remains public.",
+                file=sys.stderr,
+            )
+        _http_kwargs: Dict[str, Any] = {
+            "host": _host,
+            "port": _port,
+            "path": _path,
+        }
+        if _http_middleware:
+            _http_kwargs["middleware"] = _http_middleware
         # Prefer MCP Streamable HTTP (default path /mcp). Requires FastMCP >= ~2.12 and
         # httpx>=0.28.1; provenaclient 0.29.1 still pins httpx<0.28, so a plain `pip install .`
         # often resolves to older FastMCP — then we fall back to legacy SSE on /sse.
         try:
-            mcp.run(
-                transport="streamable-http",
-                host=_host,
-                port=_port,
-                path=_path,
-            )
+            mcp.run(transport="streamable-http", **_http_kwargs)
         except (TypeError, ValueError):
             if hasattr(mcp, "settings"):
                 mcp.settings.host = _host
@@ -2633,6 +2663,9 @@ if __name__ == "__main__":
                 "httpx (see README; Docker image installs a compatible set).",
                 file=sys.stderr,
             )
-            mcp.run(transport="sse")
+            _sse_kwargs = {"host": _host, "port": _port}
+            if _http_middleware:
+                _sse_kwargs["middleware"] = _http_middleware
+            mcp.run(transport="sse", **_sse_kwargs)
     else:
         mcp.run()

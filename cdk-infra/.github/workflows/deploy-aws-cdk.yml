@@ -65,6 +65,7 @@ jobs:
           MCP_MEMORY_MIB: ${{ vars.MCP_MEMORY_MIB }}
           PROVENA_OFFLINE_TOKEN_SECRET_ARN: ${{ vars.PROVENA_OFFLINE_TOKEN_SECRET_ARN }}
           OPENAI_API_KEY_SECRET_ARN: ${{ vars.OPENAI_API_KEY_SECRET_ARN }}
+          MCP_OAUTH_PASSWORD_SECRET_ARN: ${{ vars.MCP_OAUTH_PASSWORD_SECRET_ARN }}
         run: |
           pnpm config-check
           if [ "${{ github.event.inputs.action }}" = "deploy" ]; then

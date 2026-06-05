@@ -28,6 +28,8 @@ const envSchema = z.object({
   MCP_CONTAINER_IMAGE: z.string().optional(),
   PROVENA_OFFLINE_TOKEN_SECRET_ARN: z.string().optional(),
   OPENAI_API_KEY_SECRET_ARN: z.string().optional(),
+  MCP_API_KEY_SECRET_ARN: z.string().optional(),
+  MCP_OAUTH_PASSWORD_SECRET_ARN: z.string().optional(),
 });
 
 const settingsSchema = z.object({
@@ -44,6 +46,8 @@ const settingsSchema = z.object({
   mcpContainerImage: z.string().optional(),
   provenaOfflineTokenSecretArn: z.string().optional(),
   openAiApiKeySecretArn: z.string().optional(),
+  mcpApiKeySecretArn: z.string().optional(),
+  mcpOauthPasswordSecretArn: z.string().optional(),
 });
 
 export type Settings = z.infer<typeof settingsSchema>;
@@ -117,6 +121,8 @@ export function buildSettingsFromEnv(): Settings {
       mcpContainerImage: env.MCP_CONTAINER_IMAGE?.trim() || undefined,
       provenaOfflineTokenSecretArn: env.PROVENA_OFFLINE_TOKEN_SECRET_ARN,
       openAiApiKeySecretArn: env.OPENAI_API_KEY_SECRET_ARN,
+      mcpApiKeySecretArn: env.MCP_API_KEY_SECRET_ARN,
+      mcpOauthPasswordSecretArn: env.MCP_OAUTH_PASSWORD_SECRET_ARN,
     } satisfies Settings);
   } catch (error) {
     throw new Error(

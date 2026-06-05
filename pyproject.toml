@@ -7,7 +7,7 @@ name = "provena-mcp-server"
 version = "0.1.0"
 description = "MCP Server for Provena API integration with Pydantic v2"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11,<3.14"
 dependencies = [
     "fastmcp>=2.0.0",
     "provenaclient==0.29.1",

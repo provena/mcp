@@ -66,6 +66,24 @@ export class McpService extends Construct {
         openAiSecret,
       );
     }
+    if (settings.mcpApiKeySecretArn) {
+      const mcpApiKeySecret = secretsmanager.Secret.fromSecretCompleteArn(
+        this,
+        "McpApiKeySecret",
+        settings.mcpApiKeySecretArn,
+      );
+      containerSecrets.MCP_API_KEY = ecs.Secret.fromSecretsManager(mcpApiKeySecret);
+    }
+    if (settings.mcpOauthPasswordSecretArn) {
+      const mcpOauthPasswordSecret = secretsmanager.Secret.fromSecretCompleteArn(
+        this,
+        "McpOauthPasswordSecret",
+        settings.mcpOauthPasswordSecretArn,
+      );
+      containerSecrets.MCP_OAUTH_PASSWORD = ecs.Secret.fromSecretsManager(
+        mcpOauthPasswordSecret,
+      );
+    }
 
     this.service = new ecsPatterns.ApplicationLoadBalancedFargateService(
       this,
@@ -91,6 +109,9 @@ export class McpService extends Construct {
             MCP_HTTP_HOST: "0.0.0.0",
             MCP_HTTP_PORT: "5000",
             MCP_HTTP_PATH: settings.mcpHttpPath,
+            MCP_HTTP_AUTH: "oauth",
+            MCP_OAUTH_BASE_URL: this.mcpUrl,
+            MCP_OAUTH_STATE_DIR: "/app/.oauth-state",
             PROVENA_MCP_NO_DOTENV: "1",
             PROVENA_INSTANCE: settings.provenaInstance,
             PROVENA_CONFIG_FILE: "/app/provena_instances.json",
@@ -105,7 +126,7 @@ export class McpService extends Construct {
     );
 
     this.service.targetGroup.configureHealthCheck({
-      path: settings.mcpHttpPath,
+      path: "/health",
       protocol: elbv2.Protocol.HTTP,
       port: "5000",
       healthyHttpCodes: "200-499",

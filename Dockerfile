@@ -21,7 +21,7 @@ COPY provena_tokens.json ./
 # provenaclient pins httpx<0.28; Streamable HTTP needs fastmcp>=2.12 which requires httpx>=0.28.1.
 # Install a compatible stack, then this package without re-resolving those pins.
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir "fastmcp>=2.12.0" "httpx>=0.28.1,<1" \
+    && pip install --no-cache-dir "fastmcp==2.13.0" "httpx>=0.28.1,<1" \
     && pip install --no-cache-dir boto3==1.27.1 "cloudpathlib[s3]==0.15.1" \
         "provena-interfaces-v2>=2.10.5" "pydantic>=2,<3" "python-jose<3.3.0" "requests>=2.26.0,<3" \
     && pip install --no-cache-dir "provenaclient==0.29.1" --no-deps \
@@ -39,9 +39,12 @@ ENV PROVENA_MCP_NO_DOTENV=1
 ENV MCP_HTTP_HOST=0.0.0.0 \
     MCP_HTTP_PORT=5000
 
-RUN useradd --create-home --uid 10001 appuser \
+RUN mkdir -p /app/.oauth-state \
+    && useradd --create-home --uid 10001 appuser \
     && chown -R appuser:appuser /app
 USER appuser
+
+ENV MCP_OAUTH_STATE_DIR=/app/.oauth-state
 
 EXPOSE 5000
 
