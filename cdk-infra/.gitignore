@@ -5,5 +5,9 @@ node_modules
 
 .cdk.staging
 cdk.out
-.env*
-!.env.dist
+
+# Local env files (secrets) — never commit
+.env
+.env.*
+!.env*.dist
+!.env.template

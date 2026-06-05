@@ -6,6 +6,9 @@ __pycache__/
 venv/
 .venv/
 
+# OAuth token state (local HTTP mode)
+.oauth-state/
+
 # Provena/legacy token files (should not be used, but just in case)
 provena.key
 provena_tokens.enc
@@ -17,8 +20,14 @@ provena_instances.json
 
 tokens.json
 
-# dotenv
+# dotenv / secrets (templates like .env.example stay tracked)
 .env
+.env.*
+!.env.example
+!.env.template
+
+# Local MCP config may contain API keys
+.cursor/mcp.json
 
 # OS files
 .DS_Store
