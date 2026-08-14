@@ -1,0 +1,13 @@
+*.js
+!jest.config.js
+*.d.ts
+node_modules
+
+.cdk.staging
+cdk.out
+
+# Local env files (secrets) — never commit
+.env
+.env.*
+!.env*.dist
+!.env.template

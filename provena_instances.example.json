@@ -1,0 +1,26 @@
+{
+  "instances": {
+    "dev.rrap-is.com": {
+      "domain": "dev.rrap-is.com",
+      "realm": "rrap",
+      "datastore_api": null,
+      "registry_api": null,
+      "prov_api": "https://prov-api.dev.rrap-is.com",
+      "search_api": null,
+      "search_service": null,
+      "handle_service": null,
+      "jobs_service": null
+    },
+    "mds.gbrrestoration.org": {
+      "domain": "mds.gbrrestoration.org",
+      "realm": "rrap",
+      "datastore_api": "https://data-api.mds.gbrrestoration.org",
+      "registry_api": "https://registry-api.mds.gbrrestoration.org",
+      "prov_api": "https://prov-api.mds.gbrrestoration.org",
+      "search_api": "https://search.mds.gbrrestoration.org",
+      "search_service": "https://search.mds.gbrrestoration.org",
+      "handle_service": null,
+      "jobs_service": null
+    }
+  }
+}

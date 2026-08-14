@@ -1,0 +1,22 @@
+{
+  "mcpServers": {
+    "provena": {
+      "type": "stdio",
+      "command": "${workspaceFolder}/.venv/bin/python",
+      "args": ["${workspaceFolder}/server/provena_mcp_server.py"],
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env"
+    },
+    "provena-http": {
+      "url": "http://127.0.0.1:5000/mcp"
+    },
+    "provena-dev": {
+      "type": "http",
+      "url": "https://provena-mcp-dev.rrap-is.com"
+    },
+    "provena-prod": {
+      "type": "http",
+      "url": "https://provena-mcp.mds.gbrrestoration.org"
+    }
+  }
+}
