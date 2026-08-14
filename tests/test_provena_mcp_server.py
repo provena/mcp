@@ -195,3 +195,244 @@ async def test_get_provena_connection_info_tool(ctx, monkeypatch):
     assert res["domain"] == "d"
     assert res["auth_mode"] == "none"
     assert res["config_file"] == "/x/pi.json"
+
+
+# -----------------------------------------------
+# Coerce helpers
+# -----------------------------------------------
+def test_coerce_json_list_accepts_string_and_list():
+    assert srv._coerce_json_list('["a","b"]') == ["a", "b"]
+    assert srv._coerce_json_list(["a", "b"]) == ["a", "b"]
+
+
+def test_coerce_json_dict_accepts_string_and_dict():
+    assert srv._coerce_json_dict('{"k":"v"}') == {"k": "v"}
+    assert srv._coerce_json_dict({"k": "v"}) == {"k": "v"}
+    assert srv._coerce_json_dict(None) is None
+
+
+# -----------------------------------------------
+# create_dataset_template
+# -----------------------------------------------
+@pytest.mark.asyncio
+async def test_create_dataset_template_empty_resources(ctx, monkeypatch):
+    import types as _types
+
+    class FakeCreated:
+        id = "10378.1/50"
+
+    class FakeResult:
+        status = DummyStatus(True, "OK")
+        created_item = FakeCreated()
+
+    class FakeDTClient:
+        async def create_item(self, create_item_request):
+            return FakeResult()
+
+    fake = _types.SimpleNamespace(
+        registry=_types.SimpleNamespace(dataset_template=FakeDTClient())
+    )
+
+    async def _req(_ctx):
+        return fake
+
+    monkeypatch.setattr(srv, "require_authentication", _req)
+    res = await srv.create_dataset_template.fn(
+        ctx,
+        display_name="T",
+        description="desc",
+    )
+    assert res["status"] == "success"
+    assert res["template_id"] == "10378.1/50"
+
+
+# -----------------------------------------------
+# create_model_run_workflow_template
+# -----------------------------------------------
+@pytest.mark.asyncio
+async def test_create_model_run_workflow_template_accepts_list_params(ctx, monkeypatch):
+    import types as _types
+
+    class FakeCreated:
+        id = "10378.1/60"
+
+    class FakeResult:
+        status = DummyStatus(True, "OK")
+        created_item = FakeCreated()
+
+    class FakeWFClient:
+        async def create_item(self, create_item_request):
+            return FakeResult()
+
+    class FakeModelClient:
+        async def fetch_item(self, **_):
+            class R:
+                status = DummyStatus(True)
+                item = _types.SimpleNamespace(id="10378.1/1")
+            return R()
+
+    fake = _types.SimpleNamespace(
+        registry=_types.SimpleNamespace(
+            model_run_workflow=FakeWFClient(),
+            model=FakeModelClient(),
+        )
+    )
+
+    async def _req(_ctx):
+        return fake
+
+    monkeypatch.setattr(srv, "require_authentication", _req)
+    res = await srv.create_model_run_workflow_template.fn(
+        ctx,
+        display_name="WFT",
+        model_id="10378.1/1",
+        input_template_ids=[{"template_id": "10378.1/2"}],
+        output_template_ids=[{"template_id": "10378.1/3"}],
+    )
+    assert res["status"] == "success"
+    assert res["workflow_template_id"] == "10378.1/60"
+
+
+# -----------------------------------------------
+# create_model_run (study_id)
+# -----------------------------------------------
+@pytest.mark.asyncio
+async def test_create_model_run_calls_register_model_run(ctx, monkeypatch):
+    class FakeProvAPI:
+        def __init__(self):
+            self.calls = []
+
+        async def register_model_run(self, model_run_payload):
+            self.calls.append(model_run_payload)
+            class R:
+                status = DummyStatus(True, "OK")
+                session_id = "session-123"
+            return R()
+
+    class FakeRegistry:
+        async def general_fetch_item(self, id):
+            return DummyFetchResult({
+                "input_templates": [{"template_id": "10378.1/2"}],
+                "output_templates": [{"template_id": "10378.1/3"}],
+            })
+
+    prov_api = FakeProvAPI()
+    fake = types.SimpleNamespace(
+        registry=FakeRegistry(),
+        prov_api=prov_api,
+    )
+
+    async def _req(_ctx):
+        return fake
+    monkeypatch.setattr(srv, "require_authentication", _req)
+
+    res = await srv.create_model_run.fn(
+        ctx,
+        workflow_template_id="10378.1/10",
+        display_name="Run",
+        description="desc",
+        start_time="2026-01-01T00:00:00Z",
+        end_time="2026-01-01T01:00:00Z",
+        associations_modeller_id="10378.1/20",
+        associations_requesting_organisation_id="10378.1/21",
+        input_datasets=["10378.1/30"],
+        output_datasets=["10378.1/31"],
+    )
+    assert res["status"] == "success"
+    assert res["session_id"] == "session-123"
+    assert len(prov_api.calls) == 1
+    assert prov_api.calls[0].study_id is None
+
+
+@pytest.mark.asyncio
+async def test_create_model_run_passes_study_id(ctx, monkeypatch):
+    class FakeProvAPI:
+        def __init__(self):
+            self.calls = []
+
+        async def register_model_run(self, model_run_payload):
+            self.calls.append(model_run_payload)
+            class R:
+                status = DummyStatus(True, "OK")
+                session_id = "session-456"
+            return R()
+
+    class FakeRegistry:
+        async def general_fetch_item(self, id):
+            return DummyFetchResult({
+                "input_templates": [{"template_id": "10378.1/2"}],
+                "output_templates": [{"template_id": "10378.1/3"}],
+            })
+
+    prov_api = FakeProvAPI()
+    fake = types.SimpleNamespace(
+        registry=FakeRegistry(),
+        prov_api=prov_api,
+    )
+
+    async def _req(_ctx):
+        return fake
+    monkeypatch.setattr(srv, "require_authentication", _req)
+
+    res = await srv.create_model_run.fn(
+        ctx,
+        workflow_template_id="10378.1/10",
+        display_name="Run with Study",
+        description="desc",
+        start_time="2026-01-01T00:00:00Z",
+        end_time="2026-01-01T01:00:00Z",
+        associations_modeller_id="10378.1/20",
+        associations_requesting_organisation_id="10378.1/21",
+        input_datasets=["10378.1/30"],
+        output_datasets=["10378.1/31"],
+        study_id="10378.1/99",
+    )
+    assert res["status"] == "success"
+    assert res["session_id"] == "session-456"
+    assert len(prov_api.calls) == 1
+    assert prov_api.calls[0].study_id == "10378.1/99"
+
+
+# -----------------------------------------------
+# create_study
+# -----------------------------------------------
+@pytest.mark.asyncio
+async def test_create_study_registers_and_returns_id(ctx, monkeypatch):
+    class FakeCreatedItem:
+        id = "10378.1/999"
+
+    class FakeCreateResult:
+        status = DummyStatus(True, "OK")
+        created_item = FakeCreatedItem()
+
+    class FakeStudyClient:
+        def __init__(self):
+            self.calls = []
+
+        async def create_item(self, create_item_request):
+            self.calls.append(create_item_request)
+            return FakeCreateResult()
+
+    study_client = FakeStudyClient()
+    fake = types.SimpleNamespace(
+        registry=types.SimpleNamespace(study=study_client),
+    )
+
+    async def _req(_ctx):
+        return fake
+    monkeypatch.setattr(srv, "require_authentication", _req)
+
+    res = await srv.create_study.fn(
+        ctx,
+        title="Coral Reef Resilience Study",
+        description="Investigating recovery patterns after bleaching events.",
+        study_alternative_id="RRAP-2026-001",
+    )
+    assert res["status"] == "success"
+    assert res["study_id"] == "10378.1/999"
+    assert "handle_url" in res
+    assert len(study_client.calls) == 1
+    payload = study_client.calls[0]
+    assert payload.title == "Coral Reef Resilience Study"
+    assert payload.study_alternative_id == "RRAP-2026-001"
+    assert payload.display_name == "Coral Reef Resilience Study"

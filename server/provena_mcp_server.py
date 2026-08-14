@@ -9,7 +9,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 
 def _load_repo_dotenv() -> None:
@@ -30,6 +30,10 @@ def _load_repo_dotenv() -> None:
 
 _load_repo_dotenv()
 
+from server import provena_runtime as pr
+
+pr.apply_provenaclient_patches()
+
 import asyncio
 
 from fastmcp import FastMCP, Context
@@ -39,7 +43,6 @@ from provenaclient.auth.implementations import OfflineFlow
 from provenaclient.auth.manager import Log
 from provenaclient.utils.config import APIOverrides
 
-from server import provena_runtime as pr
 from server.mcp_http_auth import build_http_auth_middleware, register_health_route
 from server.mcp_http_oauth import build_oauth_provider, resolve_http_auth_mode
 from server.mcp_oauth_password_gate import register_oauth_password_gate
@@ -643,49 +646,55 @@ CRITICAL: Ask ONE question per message. User can provide any format - convert as
    - IF NEW: Explain "Need template first" → use workflow_template_registration prompt
    - Fetch template to check input/output/annotation requirements
 
-3. **BASIC INFO**
+3. **STUDY** (optional)
+   - Ask: "Is this model run part of a Study?"
+   - IF YES: search_registry(subtype_filter="STUDY"), show results; user can provide ID or create new
+   - IF NO / skipped: leave study_id as None
+
+4. **BASIC INFO**
    - display_name: "What name for this model run?" (unique identifier)
    - description: "Describe this run" (purpose, parameters, conditions)
    - model_version: "Different version than template?" (optional)
 
-4. **TEMPORAL** (ISO 8601 required: YYYY-MM-DDTHH:MM:SSZ)
+5. **TEMPORAL** (ISO 8601 required: YYYY-MM-DDTHH:MM:SSZ)
    - start_time: "When did execution start?" (accept any format, convert)
    - end_time: "When did it finish?" (validate: must be after start_time)
 
-5. **ASSOCIATIONS** (REQUIRED - search or provide IDs)
+6. **ASSOCIATIONS** (REQUIRED - search or provide IDs)
    - modeller_id: "Who ran this?" → search_registry(subtype_filter="PERSON")
    - requesting_organisation_id: "Which org requested?" → search_registry(subtype_filter="ORGANISATION")
    - Offer to create new if not found
 
-6. **INPUT DATASETS** (optional but recommended)
+7. **INPUT DATASETS** (optional but recommended)
    - "Which datasets were inputs?" (reference template requirements)
    - For each: search or provide ID, add to list
    - "Add another?" (repeat)
 
-7. **OUTPUT DATASETS** (optional but recommended)
+8. **OUTPUT DATASETS** (optional but recommended)
    - "Which datasets were outputs?" (reference template requirements)
    - Same process as inputs
 
-8. **ANNOTATIONS** (check template requirements)
+9. **ANNOTATIONS** (check template requirements)
    - IF required_annotations: "Template requires: {list}" → collect each
    - IF optional_annotations: "Provide optional? {list}" → collect if yes
    - Format: {"key": "value"}
 
-9. **USER METADATA** (optional)
-   - "Add custom metadata?" → collect as key-value pairs, format as JSON
+10. **USER METADATA** (optional)
+    - "Add custom metadata?" → collect as key-value pairs, format as JSON
 
-10. **CONFIRMATION**
+11. **CONFIRMATION**
     Show summary:
     - All collected fields with values
     - Input/output counts
     - Annotations
+    - Study ID (if provided)
     ASK: "Does this look correct? Type 'yes' to register."
     WAIT for explicit "yes"
 
-11. **REGISTRATION**
+12. **REGISTRATION**
     ONLY after confirmation: create_model_run(all collected data)
 
-12. **POST-REGISTRATION**
+13. **POST-REGISTRATION**
     - Success message
     - Show handle URL: https://hdl.handle.net/{id}
     - Explain provenance graph created
@@ -842,6 +851,360 @@ async def fetch_registry_item(ctx: Context, item_id: str) -> Dict[str, Any]:
         await ctx.error(f"Failed to fetch registry item: {str(e)}")
         return {"status": "error", "message": str(e)}
 
+_REGISTRY_SORT_BY_ALIASES = {
+    "updated": "UPDATED_TIME",
+    "created": "CREATED_TIME",
+    "released": "RELEASE_TIMESTAMP",
+}
+
+# Subtype-specific registry subclients (provenaclient Registry module).
+_REGISTRY_SUBTYPE_LIST_CLIENT_ATTR: Dict[str, str] = {
+    "MODEL_RUN": "model_run",
+    "MODEL": "model",
+    "STUDY": "study",
+    "ORGANISATION": "organisation",
+    "PERSON": "person",
+}
+
+
+def _resolve_registry_sort_by(sort_by: str) -> Tuple[Optional[Any], Optional[str]]:
+    """Map user-facing sort key to Provena SortType, or return an error message."""
+    from ProvenaInterfaces.RegistryAPI import SortType
+
+    key = (sort_by or "").strip().lower()
+    sort_name = _REGISTRY_SORT_BY_ALIASES.get(key)
+    if not sort_name:
+        valid = ", ".join(sorted(_REGISTRY_SORT_BY_ALIASES))
+        return None, f"Invalid sort_by '{sort_by}'. Valid options: {valid}"
+    return SortType[sort_name], None
+
+
+def _timestamp_to_iso(ts: Any) -> Optional[str]:
+    """Convert a Provena unix timestamp to an ISO-8601 UTC string."""
+    if ts is None:
+        return None
+    try:
+        from datetime import datetime, timezone
+
+        return datetime.fromtimestamp(int(ts), tz=timezone.utc).isoformat()
+    except (TypeError, ValueError, OSError, OverflowError):
+        return None
+
+
+def _summarize_registry_list_item(item: Any) -> Dict[str, Any]:
+    """Lightweight summary for sorted registry list responses."""
+    data = _dump(item)
+    created_ts = data.get("created_timestamp")
+    updated_ts = data.get("updated_timestamp")
+    release_ts = data.get("release_timestamp")
+    summary: Dict[str, Any] = {
+        "id": data.get("id"),
+        "display_name": data.get("display_name"),
+        "item_subtype": data.get("item_subtype"),
+        "created_timestamp": created_ts,
+        "updated_timestamp": updated_ts,
+        "created_at": _timestamp_to_iso(created_ts),
+        "updated_at": _timestamp_to_iso(updated_ts),
+    }
+    if release_ts is not None:
+        summary["release_timestamp"] = release_ts
+        summary["released_at"] = _timestamp_to_iso(release_ts)
+
+    collection_format = data.get("collection_format") or {}
+    dataset_info = collection_format.get("dataset_info") or {}
+    published_date = dataset_info.get("published_date") or {}
+    if published_date.get("relevant") and published_date.get("value") is not None:
+        summary["published_date"] = published_date.get("value")
+
+    return summary
+
+
+def _build_registry_list_pagination(
+    *,
+    page_size: int,
+    shown_items: int,
+    pagination_key: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Pagination metadata with explicit guidance (API counts are per-page only)."""
+    return {
+        "page_size": page_size,
+        "shown_items": shown_items,
+        "has_more_pages": pagination_key is not None,
+        "pagination_key": pagination_key,
+        "note": (
+            "One page of results. Pass pagination_key to fetch the next page. "
+            "For keyword search ranked by relevance, use search_registry instead. "
+            "For total counts by entity type, use get_registry_items_count."
+        ),
+    }
+
+
+async def _list_registry_items_sorted(
+    client: ProvenaClient,
+    list_request: Any,
+    subtype_enum: Optional[Any],
+) -> Any:
+    """List registry items via subtype endpoint when available, else general list."""
+    if subtype_enum is None:
+        return await client.registry.list_general_registry_items(
+            general_list_request=list_request
+        )
+
+    client_attr = _REGISTRY_SUBTYPE_LIST_CLIENT_ATTR.get(subtype_enum.value)
+    if client_attr and hasattr(client.registry, client_attr):
+        subclient = getattr(client.registry, client_attr)
+        return await subclient.list_items(list_request)
+
+    from ProvenaInterfaces.RegistryAPI import DatasetListResponse
+    from ProvenaInterfaces.RegistryModels import ItemSubType
+
+    subtype_response_models = {
+        ItemSubType.DATASET: DatasetListResponse,
+    }
+    response_model = subtype_response_models.get(subtype_enum)
+    if response_model is not None:
+        return await client.registry._registry_client.list_items(
+            list_items_payload=list_request,
+            item_subtype=subtype_enum,
+            update_model_response=response_model,
+        )
+
+    return await client.registry.list_general_registry_items(
+        general_list_request=list_request
+    )
+
+
+async def _list_entities_sorted_impl(
+    ctx: Context,
+    *,
+    subtype_filter: Optional[str],
+    sort_by: str,
+    ascending: bool,
+    page_size: int,
+    pagination_key: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    client = await require_authentication(ctx)
+    if not client:
+        return {"status": "error", "message": "Authentication required"}
+
+    from ProvenaInterfaces.RegistryAPI import (
+        FilterOptions,
+        GeneralListRequest,
+        QueryRecordTypes,
+        SortOptions,
+    )
+    from ProvenaInterfaces.RegistryModels import ItemSubType
+
+    sort_type, sort_error = _resolve_registry_sort_by(sort_by)
+    if sort_error:
+        return {"status": "error", "message": sort_error}
+
+    subtype_enum = None
+    if subtype_filter:
+        try:
+            subtype_enum = ItemSubType(subtype_filter.upper())
+        except ValueError:
+            valid_subtypes = [item.value for item in ItemSubType]
+            return {
+                "status": "error",
+                "message": f"Invalid subtype_filter. Valid options: {valid_subtypes}",
+            }
+
+    filter_by = None
+    if subtype_enum is not None:
+        filter_by = FilterOptions(
+            record_type=QueryRecordTypes.COMPLETE_ONLY,
+            item_subtype=subtype_enum,
+            release_reviewer=None,
+            release_status=None,
+        )
+
+    list_request = GeneralListRequest(
+        filter_by=filter_by,
+        sort_by=SortOptions(
+            sort_type=sort_type,
+            ascending=ascending,
+            begins_with=None,
+        ),
+        pagination_key=pagination_key,
+        page_size=page_size,
+    )
+
+    subtype_label = subtype_enum.value if subtype_enum else "ALL"
+    await ctx.info(
+        f"Listing registry items subtype={subtype_label} sort_by={sort_by} "
+        f"ascending={ascending} page_size={page_size}"
+    )
+
+    result = await _list_registry_items_sorted(client, list_request, subtype_enum)
+    if not result.status.success:
+        await ctx.error(f"List failed: {result.status.details}")
+        return {"status": "error", "message": result.status.details}
+
+    raw_items = result.items or []
+    items = [_summarize_registry_list_item(item) for item in raw_items]
+    next_key = getattr(result, "pagination_key", None)
+
+    await ctx.info(
+        f"Returning {len(items)} items (subtype={subtype_label}, "
+        f"has_more_pages={next_key is not None})"
+    )
+    return {
+        "status": "success",
+        "subtype_filter": subtype_enum.value if subtype_enum else None,
+        "sort_by": sort_by,
+        "ascending": ascending,
+        "items": items,
+        "pagination": _build_registry_list_pagination(
+            page_size=page_size,
+            shown_items=len(items),
+            pagination_key=next_key,
+        ),
+    }
+
+
+@mcp.tool()
+async def list_entities_sorted(
+    ctx: Context,
+    sort_by: str = "updated",
+    subtype_filter: Optional[str] = None,
+    ascending: bool = False,
+    page_size: int = 20,
+    pagination_key: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    List registry entities with server-side date sorting (newest first by default).
+
+    Args:
+        sort_by: One of ``updated`` (last modified), ``created``, or ``released``
+            (dataset release-workflow timestamp; mainly meaningful for DATASET).
+        subtype_filter: Optional ItemSubType filter (e.g. DATASET, MODEL_RUN, MODEL, STUDY).
+        ascending: False = newest/highest first for timestamp sorts (default).
+        page_size: Number of items per page (default 20).
+        pagination_key: Pass the value from a previous response to fetch the next page.
+
+    Returns:
+        Lightweight item summaries plus pagination metadata (one page at a time).
+        ``published_date`` is included when present on dataset records but cannot
+        be used as a sort key. Use ``get_registry_items_count`` for totals by type.
+    """
+    try:
+        return await _list_entities_sorted_impl(
+            ctx,
+            subtype_filter=subtype_filter,
+            sort_by=sort_by,
+            ascending=ascending,
+            page_size=page_size,
+            pagination_key=pagination_key,
+        )
+    except Exception as e:
+        await ctx.error(f"Failed to list sorted registry items: {str(e)}")
+        return {"status": "error", "message": str(e)}
+
+
+@mcp.tool()
+async def list_model_runs_sorted(
+    ctx: Context,
+    sort_by: str = "updated",
+    ascending: bool = False,
+    page_size: int = 20,
+    pagination_key: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    List MODEL_RUN registry items sorted by date (default: last updated, newest first).
+
+    Returns one page (default 20 items). The registry may contain many more model runs —
+    pass ``pagination_key`` from the response to fetch the next page. This is not the
+    same as ``search_registry``, which ranks by keyword relevance. For total model run
+    count, use ``get_registry_items_count``.
+    """
+    try:
+        return await _list_entities_sorted_impl(
+            ctx,
+            subtype_filter="MODEL_RUN",
+            sort_by=sort_by,
+            ascending=ascending,
+            page_size=page_size,
+            pagination_key=pagination_key,
+        )
+    except Exception as e:
+        await ctx.error(f"Failed to list sorted model runs: {str(e)}")
+        return {"status": "error", "message": str(e)}
+
+
+@mcp.tool()
+async def list_datasets_sorted(
+    ctx: Context,
+    sort_by: str = "updated",
+    ascending: bool = False,
+    page_size: int = 20,
+    pagination_key: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    List DATASET registry items sorted by date (default: last updated, newest first).
+
+    Use sort_by ``released`` for dataset release-workflow timestamp.
+    """
+    try:
+        return await _list_entities_sorted_impl(
+            ctx,
+            subtype_filter="DATASET",
+            sort_by=sort_by,
+            ascending=ascending,
+            page_size=page_size,
+            pagination_key=pagination_key,
+        )
+    except Exception as e:
+        await ctx.error(f"Failed to list sorted datasets: {str(e)}")
+        return {"status": "error", "message": str(e)}
+
+
+@mcp.tool()
+async def list_studies_sorted(
+    ctx: Context,
+    sort_by: str = "updated",
+    ascending: bool = False,
+    page_size: int = 20,
+    pagination_key: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """List STUDY registry items sorted by date (default: last updated, newest first)."""
+    try:
+        return await _list_entities_sorted_impl(
+            ctx,
+            subtype_filter="STUDY",
+            sort_by=sort_by,
+            ascending=ascending,
+            page_size=page_size,
+            pagination_key=pagination_key,
+        )
+    except Exception as e:
+        await ctx.error(f"Failed to list sorted studies: {str(e)}")
+        return {"status": "error", "message": str(e)}
+
+
+@mcp.tool()
+async def list_models_sorted(
+    ctx: Context,
+    sort_by: str = "updated",
+    ascending: bool = False,
+    page_size: int = 20,
+    pagination_key: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """List MODEL registry items sorted by date (default: last updated, newest first)."""
+    try:
+        return await _list_entities_sorted_impl(
+            ctx,
+            subtype_filter="MODEL",
+            sort_by=sort_by,
+            ascending=ascending,
+            page_size=page_size,
+            pagination_key=pagination_key,
+        )
+    except Exception as e:
+        await ctx.error(f"Failed to list sorted models: {str(e)}")
+        return {"status": "error", "message": str(e)}
+
+
 @mcp.tool()
 async def list_registry_items(ctx: Context, page_size: Optional[int] = 20) -> Dict[str, Any]:
     """List general registry items returning full raw objects (first page_size)."""
@@ -914,6 +1277,43 @@ async def get_registry_items_count(ctx: Context) -> Dict[str, Any]:
 def _get_prov_client(client: ProvenaClient) -> Optional[Any]:
     """Return the provenance API client if available on a ProvenaClient instance."""
     return getattr(client, "prov_api", None)
+
+
+def _coerce_json_list(value: Optional[Union[str, list]]) -> List[Any]:
+    """Parse a JSON array from a string, or return a list unchanged.
+
+    MCP clients may pass JSON-encoded arrays as native lists before the tool runs.
+    """
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return []
+        parsed = json.loads(stripped)
+        if not isinstance(parsed, list):
+            raise ValueError("expected a JSON array")
+        return parsed
+    raise TypeError(f"expected str or list, got {type(value).__name__}")
+
+
+def _coerce_json_dict(value: Optional[Union[str, dict]]) -> Optional[Dict[str, Any]]:
+    """Parse a JSON object from a string, or return a dict unchanged."""
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        parsed = json.loads(stripped)
+        if not isinstance(parsed, dict):
+            raise ValueError("expected a JSON object")
+        return parsed
+    raise TypeError(f"expected str or dict, got {type(value).__name__}")
 
 
 
@@ -1627,9 +2027,9 @@ async def create_dataset_template(
     ctx: Context,
     display_name: str,
     description: Optional[str] = None,
-    defined_resources: Optional[str] = None,
-    deferred_resources: Optional[str] = None,
-    user_metadata: Optional[str] = None
+    defined_resources: Optional[Union[str, list]] = None,
+    deferred_resources: Optional[Union[str, list]] = None,
+    user_metadata: Optional[Union[str, dict]] = None
 ) -> Dict[str, Any]:
     """
     Register a new Dataset Template in the Provena registry.
@@ -1681,52 +2081,46 @@ async def create_dataset_template(
         
         await ctx.info(f"Registering dataset template '{display_name}'")
         
-        # Parse JSON inputs
+        # Parse JSON inputs (accept JSON strings or pre-parsed lists from MCP clients)
         parsed_defined = []
-        if defined_resources:
-            try:
-                defined_list = json.loads(defined_resources)
-                for res in defined_list:
-                    parsed_defined.append(DefinedResource(
-                        path=res['path'],
-                        description=res['description'],
-                        usage_type=ResourceUsageType(res.get('usage_type', 'GENERAL_DATA')),
-                        optional=res.get('optional', False),
-                        is_folder=res.get('is_folder', False),
-                        additional_metadata=res.get('additional_metadata')
-                    ))
-            except (json.JSONDecodeError, KeyError, ValueError) as e:
-                return {"status": "error", "message": f"Invalid defined_resources format: {str(e)}"}
-        
+        try:
+            for res in _coerce_json_list(defined_resources):
+                parsed_defined.append(DefinedResource(
+                    path=res['path'],
+                    description=res['description'],
+                    usage_type=ResourceUsageType(res.get('usage_type', 'GENERAL_DATA')),
+                    optional=res.get('optional', False),
+                    is_folder=res.get('is_folder', False),
+                    additional_metadata=res.get('additional_metadata')
+                ))
+        except (json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
+            return {"status": "error", "message": f"Invalid defined_resources format: {str(e)}"}
+
         parsed_deferred = []
-        if deferred_resources:
-            try:
-                deferred_list = json.loads(deferred_resources)
-                for res in deferred_list:
-                    parsed_deferred.append(DeferredResource(
-                        key=res['key'],
-                        description=res['description'],
-                        usage_type=ResourceUsageType(res.get('usage_type', 'GENERAL_DATA')),
-                        optional=res.get('optional', False),
-                        is_folder=res.get('is_folder', False),
-                        additional_metadata=res.get('additional_metadata')
-                    ))
-            except (json.JSONDecodeError, KeyError, ValueError) as e:
-                return {"status": "error", "message": f"Invalid deferred_resources format: {str(e)}"}
-        
-        parsed_metadata = None
-        if user_metadata:
-            try:
-                parsed_metadata = json.loads(user_metadata)
-            except json.JSONDecodeError as e:
-                return {"status": "error", "message": f"Invalid JSON in user_metadata: {str(e)}"}
-        
+        try:
+            for res in _coerce_json_list(deferred_resources):
+                parsed_deferred.append(DeferredResource(
+                    key=res['key'],
+                    description=res['description'],
+                    usage_type=ResourceUsageType(res.get('usage_type', 'GENERAL_DATA')),
+                    optional=res.get('optional', False),
+                    is_folder=res.get('is_folder', False),
+                    additional_metadata=res.get('additional_metadata')
+                ))
+        except (json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
+            return {"status": "error", "message": f"Invalid deferred_resources format: {str(e)}"}
+
+        try:
+            parsed_metadata = _coerce_json_dict(user_metadata)
+        except (json.JSONDecodeError, ValueError, TypeError) as e:
+            return {"status": "error", "message": f"Invalid JSON in user_metadata: {str(e)}"}
+
         # Create the template domain info
         template_info = DatasetTemplateDomainInfo(
             display_name=display_name,
             description=description,
-            defined_resources=parsed_defined if parsed_defined else None,
-            deferred_resources=parsed_deferred if parsed_deferred else None,
+            defined_resources=parsed_defined,
+            deferred_resources=parsed_deferred,
             user_metadata=parsed_metadata
         )
         
@@ -1757,11 +2151,11 @@ async def create_model_run_workflow_template(
     ctx: Context,
     display_name: str,
     model_id: str,
-    input_template_ids: Optional[str] = None,
-    output_template_ids: Optional[str] = None,
+    input_template_ids: Optional[Union[str, list]] = None,
+    output_template_ids: Optional[Union[str, list]] = None,
     required_annotations: Optional[str] = None,
     optional_annotations: Optional[str] = None,
-    user_metadata: Optional[str] = None
+    user_metadata: Optional[Union[str, dict]] = None
 ) -> Dict[str, Any]:
     """
     Register a new Model Run Workflow Template in the Provena registry.
@@ -1804,31 +2198,26 @@ async def create_model_run_workflow_template(
         
         await ctx.info(f"Registering model run workflow template '{display_name}'")
         
-        # Parse input templates
+        # Parse input/output templates (accept JSON strings or pre-parsed lists)
         parsed_input_templates = []
-        if input_template_ids:
-            try:
-                input_list = json.loads(input_template_ids)
-                for template in input_list:
-                    parsed_input_templates.append(TemplateResource(
-                        template_id=template['template_id'],
-                        optional=template.get('optional', False)
-                    ))
-            except (json.JSONDecodeError, KeyError, ValueError) as e:
-                return {"status": "error", "message": f"Invalid input_template_ids format: {str(e)}"}
-        
-        # Parse output templates
+        try:
+            for template in _coerce_json_list(input_template_ids):
+                parsed_input_templates.append(TemplateResource(
+                    template_id=template['template_id'],
+                    optional=template.get('optional', False)
+                ))
+        except (json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
+            return {"status": "error", "message": f"Invalid input_template_ids format: {str(e)}"}
+
         parsed_output_templates = []
-        if output_template_ids:
-            try:
-                output_list = json.loads(output_template_ids)
-                for template in output_list:
-                    parsed_output_templates.append(TemplateResource(
-                        template_id=template['template_id'],
-                        optional=template.get('optional', False)
-                    ))
-            except (json.JSONDecodeError, KeyError, ValueError) as e:
-                return {"status": "error", "message": f"Invalid output_template_ids format: {str(e)}"}
+        try:
+            for template in _coerce_json_list(output_template_ids):
+                parsed_output_templates.append(TemplateResource(
+                    template_id=template['template_id'],
+                    optional=template.get('optional', False)
+                ))
+        except (json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
+            return {"status": "error", "message": f"Invalid output_template_ids format: {str(e)}"}
         
         # Parse annotations
         annotations = None
@@ -1848,14 +2237,11 @@ async def create_model_run_workflow_template(
                 
                 annotations = WorkflowTemplateAnnotations(**annotation_kwargs)
         
-        # Parse user metadata
-        parsed_metadata = None
-        if user_metadata:
-            try:
-                parsed_metadata = json.loads(user_metadata)
-            except json.JSONDecodeError as e:
-                return {"status": "error", "message": f"Invalid JSON in user_metadata: {str(e)}"}
-        
+        try:
+            parsed_metadata = _coerce_json_dict(user_metadata)
+        except (json.JSONDecodeError, ValueError, TypeError) as e:
+            return {"status": "error", "message": f"Invalid JSON in user_metadata: {str(e)}"}
+
         # Create the workflow template domain info
         workflow_template_info = ModelRunWorkflowTemplateDomainInfo(
             display_name=display_name,
@@ -2328,6 +2714,91 @@ async def create_organisation(
 
 
 @mcp.tool()
+async def create_study(
+    ctx: Context,
+    title: str,
+    description: str,
+    display_name: Optional[str] = None,
+    study_alternative_id: Optional[str] = None,
+    user_metadata: Optional[Dict[str, str]] = None
+) -> Dict[str, Any]:
+    """
+    Register a new Study in the Provena registry.
+
+    A Study groups related model runs under a common research activity. Once created,
+    the study_id can be passed to create_model_run to associate runs with this study.
+
+    CRITICAL: Never call this tool until ALL required info collected and confirmed.
+    DO NOT USE UNTIL THE USER HAS PROVIDED ALL REQUIRED INFORMATION AND CONFIRMED.
+
+    IMPORTANT WORKFLOW - Follow this exact process:
+    1. Ask user for EACH AND EVERY field conversationally, one by one
+    2. Show complete summary of ALL collected information
+    3. Get explicit user confirmation before calling this tool
+
+    REQUIRED FIELDS:
+    - title: Full title of the study
+    - description: What this study is about
+
+    OPTIONAL FIELDS:
+    - display_name: Short display name (defaults to title if not provided)
+    - study_alternative_id: An external or alternative identifier for the study
+    - user_metadata: Dictionary of additional string key-value metadata (optional but still ask)
+        - example: {"funding_body": "ARC", "grant_id": "DP123456"}
+    """
+    client = await require_authentication(ctx)
+    if not client:
+        return {"status": "error", "message": "Authentication required"}
+
+    try:
+        from pydantic import ValidationError
+        from ProvenaInterfaces.RegistryModels import StudyDomainInfo
+
+        final_display_name = display_name or title.strip()
+
+        study_info = StudyDomainInfo(
+            display_name=final_display_name,
+            title=title.strip(),
+            description=description.strip(),
+            study_alternative_id=study_alternative_id,
+            user_metadata=user_metadata
+        )
+
+        result = await client.registry.study.create_item(
+            create_item_request=study_info
+        )
+
+        if not getattr(result.status, "success", False):
+            return {
+                "status": "error",
+                "message": getattr(result.status, "details", "Unknown failure"),
+            }
+
+        created_id = result.created_item.id
+
+        await ctx.info(f"Study '{final_display_name}' registered with ID: {created_id}")
+
+        return {
+            "status": "success",
+            "study_id": created_id,
+            "message": f"Study '{final_display_name}' registered successfully",
+            "handle_url": f"https://hdl.handle.net/{created_id}" if created_id else None,
+            "note": "Use this study_id in create_model_run to associate model runs with this study."
+        }
+
+    except ValidationError as ve:
+        await ctx.error(f"Validation failed: {ve}")
+        return {
+            "status": "error",
+            "message": "Validation failed",
+            "details": [{"field": err["loc"], "message": err["msg"]} for err in ve.errors()]
+        }
+    except Exception as e:
+        await ctx.error(f"Failed to register study: {str(e)}")
+        return {"status": "error", "message": str(e)}
+
+
+@mcp.tool()
 async def create_model_run(
     ctx: Context,
     workflow_template_id: str,
@@ -2338,10 +2809,11 @@ async def create_model_run(
     associations_modeller_id: str, 
     associations_requesting_organisation_id: str, 
     model_version: Optional[str] = None,
-    input_datasets: Optional[str] = None, 
-    output_datasets: Optional[str] = None,
-    annotations: Optional[str] = None,
-    user_metadata: Optional[str] = None
+    study_id: Optional[str] = None,
+    input_datasets: Optional[Union[str, list]] = None,
+    output_datasets: Optional[Union[str, list]] = None,
+    annotations: Optional[Union[str, dict]] = None,
+    user_metadata: Optional[Union[str, dict]] = None
 ) -> Dict[str, Any]:
     """
     Register a model run activity that documents an actual execution of a model.
@@ -2373,6 +2845,7 @@ async def create_model_run(
     
     OPTIONAL FIELDS:
     - model_version: Version string if different from template's model (e.g., "v1.5.2")
+    - study_id: STUDY ID to associate this run with (search with subtype_filter="STUDY")
     - input_datasets: JSON array of input dataset IDs used
     -- If asked to create, follow the prompt register_dataset to create datasets first and then provide the returned dataset_ids here and continue to the next step
     - output_datasets: JSON array of output dataset IDs produced
@@ -2462,12 +2935,10 @@ async def create_model_run(
         
         # Parse input datasets and create TemplatedDataset objects
         parsed_inputs = []
-        if input_datasets:
+        if input_datasets is not None:
             try:
-                inputs_list = json.loads(input_datasets)
-                if not isinstance(inputs_list, list):
-                    return {"status": "error", "message": "input_datasets must be a JSON array"}
-                
+                inputs_list = _coerce_json_list(input_datasets)
+
                 # Create TemplatedDataset for each input
                 for idx, dataset_id in enumerate(inputs_list):
                     # Use corresponding template if available
@@ -2498,17 +2969,15 @@ async def create_model_run(
                     )
                     parsed_inputs.append(templated_dataset)
                     
-            except json.JSONDecodeError as e:
+            except (json.JSONDecodeError, ValueError, TypeError) as e:
                 return {"status": "error", "message": f"Invalid input_datasets JSON: {str(e)}"}
-        
+
         # Parse output datasets and create TemplatedDataset objects
         parsed_outputs = []
-        if output_datasets:
+        if output_datasets is not None:
             try:
-                outputs_list = json.loads(output_datasets)
-                if not isinstance(outputs_list, list):
-                    return {"status": "error", "message": "output_datasets must be a JSON array"}
-                
+                outputs_list = _coerce_json_list(output_datasets)
+
                 # Create TemplatedDataset for each output
                 for idx, dataset_id in enumerate(outputs_list):
                     # Use corresponding template if available
@@ -2537,28 +3006,18 @@ async def create_model_run(
                     )
                     parsed_outputs.append(templated_dataset)
                     
-            except json.JSONDecodeError as e:
+            except (json.JSONDecodeError, ValueError, TypeError) as e:
                 return {"status": "error", "message": f"Invalid output_datasets JSON: {str(e)}"}
-        
-        # Parse annotations
-        parsed_annotations = None
-        if annotations:
-            try:
-                parsed_annotations = json.loads(annotations)
-                if not isinstance(parsed_annotations, dict):
-                    return {"status": "error", "message": "annotations must be a JSON object"}
-            except json.JSONDecodeError as e:
-                return {"status": "error", "message": f"Invalid annotations JSON: {str(e)}"}
-        
-        # Parse user_metadata
-        parsed_user_metadata = None
-        if user_metadata:
-            try:
-                parsed_user_metadata = json.loads(user_metadata)
-                if not isinstance(parsed_user_metadata, dict):
-                    return {"status": "error", "message": "user_metadata must be a JSON object"}
-            except json.JSONDecodeError as e:
-                return {"status": "error", "message": f"Invalid user_metadata JSON: {str(e)}"}
+
+        try:
+            parsed_annotations = _coerce_json_dict(annotations)
+        except (json.JSONDecodeError, ValueError, TypeError) as e:
+            return {"status": "error", "message": f"Invalid annotations JSON: {str(e)}"}
+
+        try:
+            parsed_user_metadata = _coerce_json_dict(user_metadata)
+        except (json.JSONDecodeError, ValueError, TypeError) as e:
+            return {"status": "error", "message": f"Invalid user_metadata JSON: {str(e)}"}
         
         # Create association info
         associations = AssociationInfo(
@@ -2575,7 +3034,7 @@ async def create_model_run(
             annotations=parsed_annotations,
             display_name=display_name,
             description=description,
-            study_id=None,  # Can be added as optional parameter if needed
+            study_id=study_id,
             associations=associations,
             start_time=start_timestamp,
             end_time=end_timestamp,
@@ -2583,7 +3042,7 @@ async def create_model_run(
         )
         
         # Register the model run
-        result = await client.prov_api.create_model_run(model_run_payload=model_run)
+        result = await client.prov_api.register_model_run(model_run_payload=model_run)
 
         if not result.status.success:
             await ctx.error(f"Model run registration failed: {result.status.details}")

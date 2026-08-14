@@ -13,6 +13,20 @@
     "provena-remote": {
       "type": "http",
       "url": "https://provena-mcp.rrap-is.com"
+    },
+    "provena-prod": {
+      "type": "http",
+      "url": "https://provena-mcp.mds.gbrrestoration.org"
+    },
+    "provena-csiro": {
+      "type": "stdio",
+      "command": "${workspaceFolder}/.venv/bin/python",
+      "args": ["${workspaceFolder}/server/provena_mcp_server.py"],
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
+      "env": {
+        "PROVENA_INSTANCE": "provena.it.csiro.au"
+      }
     }
   }
 }

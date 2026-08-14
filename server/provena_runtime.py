@@ -13,6 +13,62 @@ from typing import Any
 
 from provenaclient.utils.config import APIOverrides
 
+_PROVENACLIENT_PATCHED = False
+
+
+def apply_provenaclient_patches() -> None:
+    """Work around provenaclient refresh requests that send an empty ``scope`` param.
+
+    Keycloak returns ``400 invalid_scope`` when ``scope`` is present but empty; omit it instead.
+    """
+    global _PROVENACLIENT_PATCHED
+    if _PROVENACLIENT_PATCHED:
+        return
+
+    from provenaclient.auth import helpers as auth_helpers
+
+    _original = auth_helpers.keycloak_refresh_token_request
+
+    def keycloak_refresh_token_request(
+        token_endpoint: str,
+        client_id: str,
+        scopes: list,
+        refresh_token: str,
+        logger,
+    ) -> dict[str, Any]:
+        filtered = [s for s in (scopes or []) if s]
+        if filtered:
+            return _original(token_endpoint, client_id, filtered, refresh_token, logger)
+
+        import requests
+
+        data = {
+            "grant_type": "refresh_token",
+            "client_id": client_id,
+            "refresh_token": refresh_token,
+        }
+        logger.info("Attempting to refresh token.")
+        response = requests.post(token_endpoint, data=data)
+        if response.status_code != 200:
+            err_msg = (
+                "The token used for refresh is invalid or has potentially expired. "
+                f"Something went wrong during token refresh. Status code: {response.status_code}."
+            )
+            logger.error(err_msg)
+            raise Exception(err_msg)
+        return response.json()
+
+    auth_helpers.keycloak_refresh_token_request = keycloak_refresh_token_request
+
+    try:
+        from provenaclient.auth import implementations as auth_impl
+
+        auth_impl.keycloak_refresh_token_request = keycloak_refresh_token_request
+    except ImportError:
+        pass
+
+    _PROVENACLIENT_PATCHED = True
+
 
 def _project_root() -> Path:
     """Repository root (parent of ``server/``)."""
@@ -185,6 +241,10 @@ def build_api_overrides_for_config(cfg: dict[str, Any]) -> APIOverrides:
         d = defaults.get(key)
         return d if d else None
 
+    keycloak = cfg.get("keycloak_endpoint")
+    if not keycloak or not str(keycloak).strip():
+        keycloak = _resolve_provena_env("KEYCLOAK_ENDPOINT", cfg.get("instance"))
+
     return APIOverrides(
         datastore_api_endpoint_override=pick("datastore_api"),
         registry_api_endpoint_override=pick("registry_api"),
@@ -193,6 +253,7 @@ def build_api_overrides_for_config(cfg: dict[str, Any]) -> APIOverrides:
         search_service_endpoint_override=pick("search_service"),
         handle_service_api_endpoint_override=pick("handle_service"),
         jobs_service_api_endpoint_override=pick("jobs_service"),
+        keycloak_endpoint_override=keycloak.strip() if keycloak else None,
     )
 
 
@@ -220,6 +281,7 @@ def get_provena_config() -> dict[str, Any]:
             "search_service": _v("search_service"),
             "handle_service": _v("handle_service"),
             "jobs_service": _v("jobs_service"),
+            "keycloak_endpoint": _v("keycloak_endpoint"),
         }
 
     instance = os.environ.get("PROVENA_INSTANCE", "").strip()
@@ -274,6 +336,7 @@ def get_provena_config() -> dict[str, Any]:
         "search_service": _api("SEARCH_SERVICE"),
         "handle_service": _api("HANDLE_SERVICE"),
         "jobs_service": _api("JOBS_SERVICE"),
+        "keycloak_endpoint": _resolve_provena_env("KEYCLOAK_ENDPOINT", instance) or None,
     }
 
 

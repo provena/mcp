@@ -1,14 +1,30 @@
 #!/usr/bin/env python3
-"""Generate a Provena offline token via OAuth device flow.
+"""Generate or export a Provena offline token.
 
-Run interactively when you need an offline refresh token for the MCP server
-(``OfflineFlow`` / ``provena_tokens.json``).
+Modes
+-----
+Device flow (default)
+    Initiates an OAuth device flow to obtain a new offline refresh token.
 
-Usage:
     python scripts/generate_provena_offline_token.py --instance dev.rrap-is.com --save
     python scripts/generate_provena_offline_token.py --output token.txt
 
-Use ``--save`` to write the token into ``provena_tokens.json`` (required for file-based MCP auth).
+Export from provena_tokens.json  (--export)
+    Reads the saved token for the given instance and prints a shell export
+    statement.  Useful for loading a token into the environment without
+    running the device flow again.
+
+    eval "$(python scripts/generate_provena_offline_token.py --instance mds.gbrrestoration.org --export)"
+
+    After eval, PROVENA_TOKEN is set in the current shell.  The AWS secret
+    helper script (setup_mcp_offline_token_aws.sh) will pick it up
+    automatically.
+
+Environment variables
+---------------------
+PROVENA_TOKEN
+    If set, skip the device flow and use this value as the token directly.
+    Combined with --save or --output to persist it.
 """
 
 from __future__ import annotations
@@ -23,6 +39,15 @@ import requests
 
 _project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_project_root))
+
+
+def _requests_verify() -> bool | str:
+    """CA bundle for internal PKI; prefers REQUESTS_CA_BUNDLE then SSL_CERT_FILE."""
+    for key in ("REQUESTS_CA_BUNDLE", "SSL_CERT_FILE", "CURL_CA_BUNDLE"):
+        path = os.environ.get(key, "").strip()
+        if path:
+            return path
+    return True
 
 
 def main() -> None:
@@ -54,6 +79,26 @@ def main() -> None:
         action="store_true",
         help="Save token to provena_tokens.json (recommended for MCP).",
     )
+    parser.add_argument(
+        "--export",
+        "-e",
+        action="store_true",
+        help=(
+            "Print 'export PROVENA_TOKEN=<token>' for the instance from "
+            "provena_tokens.json and exit.  No device flow is run.  "
+            "Use with eval: eval \"$(... --export)\"."
+        ),
+    )
+    parser.add_argument(
+        "--force",
+        "-f",
+        action="store_true",
+        help=(
+            "Force a new device flow even if PROVENA_TOKEN is set or a token "
+            "already exists in provena_tokens.json.  Overwrites the saved token "
+            "when combined with --save."
+        ),
+    )
     args = parser.parse_args()
 
     if args.instance:
@@ -66,13 +111,58 @@ def main() -> None:
     except ImportError:
         pass
 
-    from server.provena_runtime import get_provena_config, save_provena_token
+    from server.provena_runtime import (
+        build_api_overrides_for_config,
+        get_provena_config,
+        save_provena_token,
+    )
     from provenaclient.utils.config import Config
 
     cfg = get_provena_config()
     domain = cfg["domain"]
     realm = cfg["realm"]
     instance = cfg["instance"]
+
+    # --export without --force: read saved token from provena_tokens.json and print shell export
+    if args.export and not args.force:
+        import json as _json
+
+        tokens_path = _project_root / "provena_tokens.json"
+        if not tokens_path.exists():
+            print(f"Error: {tokens_path} not found. Run with --save first.", file=sys.stderr)
+            sys.exit(1)
+        tokens_data = _json.loads(tokens_path.read_text())
+        key = instance or domain or "default"
+        token = tokens_data.get("tokens", {}).get(key)
+        if not token:
+            print(
+                f"Error: No token found for instance '{key}' in {tokens_path}.",
+                file=sys.stderr,
+            )
+            print(
+                f"  Available instances: {list(tokens_data.get('tokens', {}).keys())}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        print(f"export PROVENA_TOKEN={token}")
+        return
+
+    # PROVENA_TOKEN env var: skip device flow, use token directly (unless --force)
+    env_token = os.environ.get("PROVENA_TOKEN", "").strip()
+    if env_token and not args.force:
+        print("Using token from PROVENA_TOKEN environment variable.")
+        token_str = env_token
+        key = instance or domain or "default"
+        if args.save:
+            saved_path = save_provena_token(key, token_str)
+            print(f"Token saved to {saved_path} for instance '{key}'")
+            print("(provena_tokens.json is gitignored; do not commit it.)")
+        elif args.output:
+            args.output.write_text(token_str, encoding="utf-8")
+            print(f"Token written to {args.output}")
+        else:
+            print(token_str)
+        return
 
     if not domain or not realm:
         print(
@@ -87,7 +177,8 @@ def main() -> None:
         )
         sys.exit(1)
 
-    config = Config(domain=domain, realm_name=realm)
+    api_overrides = build_api_overrides_for_config(cfg)
+    config = Config(domain=domain, realm_name=realm, api_overrides=api_overrides)
     keycloak_endpoint = config.keycloak_endpoint
     device_endpoint = f"{keycloak_endpoint}/protocol/openid-connect/auth/device"
     token_endpoint = f"{keycloak_endpoint}/protocol/openid-connect/token"
@@ -99,10 +190,12 @@ def main() -> None:
     print(f"  Keycloak: {keycloak_endpoint}")
     print()
 
+    verify = _requests_verify()
     resp = requests.post(
         device_endpoint,
         data={"client_id": client_id, "scope": " ".join(scopes)},
         headers={"Content-Type": "application/x-www-form-urlencoded"},
+        verify=verify,
     )
     if resp.status_code != 200:
         print(f"Error: Device flow request failed ({resp.status_code})", file=sys.stderr)
@@ -152,6 +245,7 @@ def main() -> None:
             token_endpoint,
             data=poll_data,
             headers={"Content-Type": "application/x-www-form-urlencoded"},
+            verify=verify,
         )
         poll_json = poll_resp.json()
 
@@ -185,6 +279,11 @@ def main() -> None:
             saved_path = save_provena_token(instance_key, token_str)
             print(f"Token saved to {saved_path} for instance '{instance_key}'")
             print("(provena_tokens.json is gitignored; do not commit it.)")
+            if args.export:
+                print(f"export PROVENA_TOKEN={token_str}")
+        elif args.export:
+            # --export --force: print export statement (optionally also --save above)
+            print(f"export PROVENA_TOKEN={token_str}")
         elif args.output:
             args.output.write_text(token_str, encoding="utf-8")
             print(f"Token written to {args.output}")

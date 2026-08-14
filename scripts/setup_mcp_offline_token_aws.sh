@@ -36,8 +36,15 @@ SECRET_NAME="provena-mcp/offline-token"
 export AWS_PROFILE AWS_REGION
 
 if [[ -z "$TOKEN" ]]; then
-  echo "Error: pass the offline refresh token as the second argument." >&2
-  echo "Generate with: python scripts/generate_provena_offline_token.py" >&2
+  # Fall back to PROVENA_TOKEN environment variable
+  TOKEN="${PROVENA_TOKEN:-}"
+fi
+
+if [[ -z "$TOKEN" ]]; then
+  echo "Error: pass the offline refresh token as the second argument or set PROVENA_TOKEN." >&2
+  echo "  CLI:    $0 <dev|prod> <token>" >&2
+  echo "  Env:    export PROVENA_TOKEN=<token> && $0 <dev|prod>" >&2
+  echo "  Export: eval \"\$(python scripts/generate_provena_offline_token.py --instance <key> --export)\" && $0 <dev|prod>" >&2
   exit 1
 fi
 
